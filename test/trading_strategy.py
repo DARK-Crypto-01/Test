@@ -1,4 +1,5 @@
 import time
+import math
 import logging
 from gateio_api import GateIOAPIClient
 from gateio_websocket import GateIOWebSocketClient
