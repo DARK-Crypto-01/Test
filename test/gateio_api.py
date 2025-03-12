@@ -92,7 +92,6 @@ class GateIOAPIClient:
 
             market = self.exchange.market(self.symbol)
             precision = market['precision']['amount']
-            self.logger.debug(f"Market precision: {precision}")
             amount = self.exchange.amount_to_precision(self.symbol, amount)
             self.logger.debug(f"Formatted amount: {amount}")
 
@@ -102,6 +101,11 @@ class GateIOAPIClient:
                 'price': limit_price,
                 'amount': amount
             }
+
+            # Add IOC parameter if enabled in config
+            if self.config.get('api', {}).get('ioc', False):
+                params['timeInForce'] = 'IOC'
+
             order = self.exchange.create_order(
                 symbol=self.symbol,
                 type='limit',
