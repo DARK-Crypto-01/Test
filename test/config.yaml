@@ -8,9 +8,9 @@ api:
 # Trading Settings
 trading:
   currency_pair: "SNAKEAI_USDT"
-  trade_limit: 6  #max loops None for infinite
+  trade_limit: 6  # max loops None for infinite
   price_poll_interval: 0.2  # seconds
-  fallback_price_precision: 4
+  fallback_price_precision: 4  # decimal places
   buy:
     trigger_price_adjust: 0.1    # Percentage for Buy Trigger/Stop Price
     limit_price_adjust: 0.2       # Percentage for Buy Order/Limit Price
