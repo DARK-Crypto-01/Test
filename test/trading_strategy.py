@@ -67,12 +67,26 @@ class TradingStrategy:
 
     def _calculate_prices(self, last_price, order_type):
         self.logger.debug(f"Calculating prices for {order_type} order with last price: {last_price}")
+        tick_size = self.tick_size  # use the stored tick size
+        
         if order_type == 'buy':
-            trigger = last_price * (1 + self.config['trading'][order_type]['trigger_price_adjust'] / 100)
-            limit = last_price * (1 + self.config['trading'][order_type]['limit_price_adjust'] / 100)
+            trigger_adjust = self.config['trading']['buy']['trigger_price_adjust']
+            limit_adjust = self.config['trading']['buy']['limit_price_adjust']
+            trigger = last_price + (trigger_adjust * tick_size)
+            limit = last_price + (limit_adjust * tick_size)
         elif order_type == 'sell':
-            trigger = last_price * (1 - self.config['trading'][order_type]['trigger_price_adjust'] / 100)
-            limit = last_price * (1 - self.config['trading'][order_type]['limit_price_adjust'] / 100)
+            trigger_adjust = self.config['trading']['sell']['trigger_price_adjust']
+            limit_adjust = self.config['trading']['sell']['limit_price_adjust']
+            trigger = last_price - (trigger_adjust * tick_size)
+            limit = last_price - (limit_adjust * tick_size)
+        else:
+            raise ValueError("Invalid order type specified")
+        
+        # Rounding using the determined precision.
+        # Compute the number of decimal places from tick_size:
+        decimal_places = -int(math.log10(tick_size))
+        trigger = round(trigger, decimal_places)
+        limit = round(limit, decimal_places)
         self.logger.debug(f"Calculated trigger: {trigger}, limit: {limit}")
         return trigger, limit
 
