@@ -1,0 +1,26 @@
+api:
+  ws_base: "wss://ws.gate.io/v4"  # Add this line
+  base_url: "https://api.gateio.ws/api/v4"
+  key: "107b455a7a46b4e43aaf658613006a85"
+  secret: "a5de19e0ad40c57ad7f5d4b067747729b55a2cfbbc0f374c1b214a1cfd23f50e"
+  
+# Trading Settings
+trading:
+  currency_pair: "SNAKEAI_USDT"
+  trade_limit: 6  #max loops None for infinite
+  price_poll_interval: 0.2  # seconds
+  buy:
+    trigger_price_adjust: 0.1    # Percentage for Buy Trigger/Stop Price
+    limit_price_adjust: 0.2       # Percentage for Buy Order/Limit Price
+    amount_percentage: 100  # % of available USDT to use for buys
+    
+  sell:
+    trigger_price_adjust: 0.1     # Percentage for Sell Trigger/Stop Price
+    limit_price_adjust: 0.2      # Percentage for Sell Order/Limit Price
+    amount_percentage: 100  # % of available BTC to sell
+
+# Logging
+logging:
+  enabled: true
+  file: "trading_bot.log"
+  level: "INFO"
