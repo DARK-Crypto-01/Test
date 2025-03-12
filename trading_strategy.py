@@ -104,26 +104,3 @@ class TradingStrategy:
                 self.logger.error(f"Error in manage_strategy loop: {str(e)}")
                 self.order_manager.recover_state()
                 time.sleep(1)
-
-# If you wish to run this module directly, you can add:
-if __name__ == "__main__":
-    import yaml
-    import sys
-
-    def load_config():
-        try:
-            with open('config.yaml', 'r') as f:
-                config = yaml.safe_load(f)
-            logging.debug("Configuration loaded successfully.")
-            return config
-        except Exception as e:
-            logging.critical(f"Config loading error: {str(e)}")
-            sys.exit(1)
-
-    logging.basicConfig(
-        level="INFO",
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-    config = load_config()
-    trader = TradingStrategy(config)
-    trader.manage_strategy()
