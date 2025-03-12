@@ -12,13 +12,13 @@ trading:
   price_poll_interval: 0.2  # seconds
   fallback_price_precision: 4  # decimal places
   buy:
-    trigger_price_adjust: 0.1    # Percentage for Buy Trigger/Stop Price
-    limit_price_adjust: 0.2       # Percentage for Buy Order/Limit Price
+    trigger_price_adjust: 1    # Percentage for Buy Trigger/Stop Price
+    limit_price_adjust: 2       # Percentage for Buy Order/Limit Price
     amount_percentage: 100  # % of available USDT to use for buys
     
   sell:
-    trigger_price_adjust: 0.1     # Percentage for Sell Trigger/Stop Price
-    limit_price_adjust: 0.2      # Percentage for Sell Order/Limit Price
+    trigger_price_adjust: 1     # Percentage for Sell Trigger/Stop Price
+    limit_price_adjust: 2      # Percentage for Sell Order/Limit Price
     amount_percentage: 100  # % of available BTC to sell
 
 # Logging
