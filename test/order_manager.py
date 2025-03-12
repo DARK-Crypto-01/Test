@@ -9,19 +9,31 @@ class OrderManager:
         self.logger = logging.getLogger("OrderManager")
 
     def place_new_order(self, calculate_prices_func, get_market_price_func):
-        last_price = get_market_price_func()
-        order_type = self.state.order_type or 'buy'
-        self.logger.info(f"Placing new {order_type} order based on last price: {last_price}")
-        trigger, limit = calculate_prices_func(last_price, order_type)
-        order = self.api.place_stop_limit_order(order_type, trigger, limit)
-        if order:
-            self.logger.info(f"New order placed: {order}")
-            self.state.active = True
-            self.state.order_type = order_type
-            self.state.last_price = last_price
-            self.state.order_id = order['id']
-        else:
-            self.logger.error("Failed to place new order.")
+        max_retries = 5
+        base_delay = 0.1  # Starting delay in seconds
+        retries = 0
+        while retries < max_retries:
+            last_price = get_market_price_func()  # Get the updated market price
+            order_type = self.state.order_type or 'buy'
+            self.logger.info(f"Placing new {order_type} order based on updated price: {last_price}")
+            trigger, limit = calculate_prices_func(last_price, order_type)
+            order = self.api.place_stop_limit_order(order_type, trigger, limit)
+            if order:
+                self.logger.info(f"New order placed: {order}")
+                self.state.active = True
+                self.state.order_type = order_type
+                self.state.last_price = last_price
+                self.state.order_id = order['id']
+                return
+            else:
+                delay = base_delay * (2 ** retries)
+                self.logger.error(
+                    f"Failed to place order; retrying with updated market price in {delay:.2f} seconds..."
+                )
+                time.sleep(delay)
+                retries += 1
+
+        self.logger.error("Unable to place new order after several retries.")
 
     def monitor_active_order(self, order, get_market_price_func, calculate_prices_func):
         current_price = get_market_price_func()
