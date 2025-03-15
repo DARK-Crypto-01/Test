@@ -1,4 +1,3 @@
-# order_manager.py
 import logging
 import time
 
@@ -14,11 +13,21 @@ class OrderManager:
         base_delay = 0.1  # Starting delay in seconds
         retries = 0
         while retries < max_retries:
-            last_price = get_market_price_func()  # Get the updated market price
+            last_price = get_market_price_func()  # Get updated market price
             order_type = self.state.order_type or 'buy'
             self.logger.info(f"Placing new {order_type} order based on updated price: {last_price}")
             trigger, limit = calculate_prices_func(last_price, order_type)
-            order = self.api.place_stop_limit_order(order_type, trigger, limit)
+            
+            custom_amount = None
+            if order_type == 'sell':
+                if self.state.last_buy_amount is not None:
+                    fee = 0.001  # 0.1% trading fee
+                    custom_amount = self.state.last_buy_amount * (1 - fee)
+                    self.logger.debug(f"Calculated sell order amount from last buy order: {custom_amount}")
+                else:
+                    self.logger.error("No last buy amount available for sell order; cannot calculate amount.")
+                    return
+            order = self.api.place_stop_limit_order(order_type, trigger, limit, custom_amount=custom_amount)
             if order:
                 self.logger.info(f"New order placed: {order}")
                 self.state.active = True
@@ -28,9 +37,7 @@ class OrderManager:
                 return
             else:
                 delay = base_delay * (2 ** retries)
-                self.logger.error(
-                    f"Failed to place order; retrying with updated market price in {delay:.2f} seconds..."
-                )
+                self.logger.error(f"Failed to place order; retrying in {delay:.2f} seconds...")
                 time.sleep(delay)
                 retries += 1
 
@@ -56,7 +63,15 @@ class OrderManager:
                 self.state.active = False
                 new_price = get_market_price_func()
                 trigger, limit = calculate_prices_func(new_price, self.state.order_type)
-                new_order = self.api.place_stop_limit_order(self.state.order_type, trigger, limit)
+                custom_amount = None
+                if self.state.order_type == 'sell':
+                    if self.state.last_buy_amount is not None:
+                        fee = 0.001  # 0.1% fee
+                        custom_amount = self.state.last_buy_amount * (1 - fee)
+                    else:
+                        self.logger.error("No last buy amount available for sell order; cannot calculate amount.")
+                        return
+                new_order = self.api.place_stop_limit_order(self.state.order_type, trigger, limit, custom_amount=custom_amount)
                 if new_order:
                     self.logger.info(f"Replaced order successfully with new order: {new_order}")
                     self.state.last_price = new_price
@@ -70,10 +85,29 @@ class OrderManager:
             self.logger.error(f"Replace failed: {str(e)}")
             self.recover_state()
 
-    def handle_order_execution(self):
-        self.logger.info("Order executed successfully.")
+    def handle_order_execution(self, execution_event):
+        """
+        Handle order execution event received via WebSocket.
+        Extract the executed amount from the event data using the 'filled' field,
+        which represents the executed quantity. If 'filled' is not present, fallback to 'amount'.
+        """
+        self.logger.info("Order executed successfully via WebSocket event.")
+        if self.state.order_type == 'buy':
+            executed_amount = 0
+            if 'filled' in execution_event:
+                try:
+                    executed_amount = float(execution_event.get('filled', 0))
+                except Exception as e:
+                    self.logger.error(f"Error parsing filled amount: {e}")
+            else:
+                try:
+                    executed_amount = float(execution_event.get('amount', 0))
+                except Exception as e:
+                    self.logger.error(f"Error parsing amount: {e}")
+            self.state.last_buy_amount = executed_amount
+            self.logger.info(f"Stored last buy amount from WebSocket: {executed_amount}")
         self.state.active = False
-        # Flip order type for the next trade
+        # Flip order type: if executed order was a buy, next will be sell; vice versa.
         self.state.order_type = 'sell' if self.state.order_type == 'buy' else 'buy'
         self.logger.info(f"Next order type set to: {self.state.order_type}")
 
@@ -81,7 +115,7 @@ class OrderManager:
         self.logger.info("Initiating state recovery...")
         max_retries = 3
         recovered = False
-        preserved_order_type = self.state.order_type  # Capture the current order type
+        preserved_order_type = self.state.order_type
 
         for attempt in range(max_retries):
             try:
@@ -99,6 +133,4 @@ class OrderManager:
 
         if not recovered:
             self.logger.critical("State recovery failed after multiple attempts!")
-            # Add emergency shutdown logic here if needed
-
         self.logger.info(f"State recovery completed. Resuming with order type: {self.state.order_type}")
