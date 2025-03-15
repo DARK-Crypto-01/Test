@@ -72,11 +72,11 @@ class GateIOWebSocketClient:
         self.logger.info("WebSocket connection opened, sending subscription messages.")
         try:
             timestamp = int(time.time())
-            # Create a signature for authentication (same for both subscriptions)
-            signature_payload = f"channel=spot.tickers&event=subscribe&time={timestamp}"
-            signature = hmac.new(
+            # Build signature for ticker subscription
+            ticker_payload = f"channel=spot.tickers&event=subscribe&time={timestamp}"
+            ticker_signature = hmac.new(
                 self.api_secret.encode('utf-8'),
-                signature_payload.encode('utf-8'),
+                ticker_payload.encode('utf-8'),
                 hashlib.sha512
             ).hexdigest()
 
@@ -89,29 +89,37 @@ class GateIOWebSocketClient:
                 "auth": {
                     "method": "api_key",
                     "KEY": self.api_key,
-                    "SIGN": signature
+                    "SIGN": ticker_signature
                 }
             }
             ws.send(json.dumps(ticker_sub_msg))
             self.logger.info("Ticker subscription message sent.")
+
+            # Build signature for order subscription (using correct channel)
+            order_payload = f"channel=spot.orders&event=subscribe&time={timestamp}"
+            order_signature = hmac.new(
+                self.api_secret.encode('utf-8'),
+                order_payload.encode('utf-8'),
+                hashlib.sha512
+            ).hexdigest()
 
             # Subscribe to order execution events
             order_sub_msg = {
                 "time": timestamp,
                 "channel": "spot.orders",
                 "event": "subscribe",
-                "payload": [],  # Depending on the API, you might include specific filters here.
+                "payload": [],  # Adjust or add filters here if required by Gate.io docs.
                 "auth": {
                     "method": "api_key",
                     "KEY": self.api_key,
-                    "SIGN": signature
+                    "SIGN": order_signature
                 }
             }
             ws.send(json.dumps(order_sub_msg))
             self.logger.info("Order subscription message sent.")
         except Exception as e:
             self.logger.error(f"Subscription failed: {str(e)}")
-
+        
     def run(self):
         self.logger.info("Starting WebSocket run loop.")
         self.ws = websocket.WebSocketApp(
