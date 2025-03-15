@@ -1,3 +1,4 @@
+# trading_strategy.py
 import time
 import math
 import logging
@@ -20,10 +21,11 @@ class TradingStrategy:
         self.logger = logging.getLogger("TradingStrategy")
         self.current_price = None
 
-        # Initialize WebSocket client
+        # Initialize WebSocket client with both callbacks
         self.ws_client = GateIOWebSocketClient(
             currency_pair=self.config['trading']['currency_pair'],
             on_price_callback=self.update_price,
+            on_order_callback=self.on_order_event,  # New callback for order events
             api_key=self.config['api']['key'],
             api_secret=self.config['api']['secret']
         )
@@ -62,6 +64,17 @@ class TradingStrategy:
     def update_price(self, price):
         self.current_price = price
         self.logger.debug(f"Price updated via callback: {price}")
+
+    def on_order_event(self, event):
+        """Called when an order event is received via websocket.
+           If the event corresponds to the current active order and indicates execution,
+           call the order manager’s execution handler.
+        """
+        event_order_id = event.get('order_id')
+        self.logger.debug(f"Order event received: {event}")
+        if self.state.active and event_order_id == self.state.order_id:
+            self.logger.info(f"Active order {event_order_id} executed. Processing execution event.")
+            self.order_manager.handle_order_execution()
 
     def _calculate_prices(self, last_price, order_type):
         self.logger.debug(f"Calculating prices for {order_type} order with last price: {last_price}")
@@ -112,8 +125,6 @@ class TradingStrategy:
                 else:
                     # Monitor only the order stored in state
                     self.order_manager.monitor_active_order(self._get_market_price, self._calculate_prices)
-                    # If the order gets executed, handle the execution logic and count the trade.
-                    # (This may be integrated inside the monitor function depending on execution feedback.)
                 time.sleep(self.config['trading']['price_poll_interval'])
             except KeyboardInterrupt:
                 self.logger.info("Stopped by user")
