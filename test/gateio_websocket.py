@@ -1,3 +1,4 @@
+# gateio_websocket.py
 import time
 import json
 import threading
@@ -7,13 +8,14 @@ import hashlib
 import hmac
 
 class GateIOWebSocketClient:
-    def __init__(self, currency_pair, on_price_callback, api_key, api_secret):
+    def __init__(self, currency_pair, on_price_callback, on_order_callback, api_key, api_secret):
         if len(api_key) != 32 or len(api_secret) != 64:
             raise ValueError("Invalid API credentials format")
         self.api_key = api_key
         self.api_secret = api_secret
         self.currency_pair = currency_pair.replace('_', '')  # e.g. BTCUSDT
         self.on_price_callback = on_price_callback
+        self.on_order_callback = on_order_callback  # New callback for order events
         self.ws_url = "wss://ws.gate.io/v4"
         self.ws = None
         self.thread = None
@@ -26,22 +28,37 @@ class GateIOWebSocketClient:
         self.logger.debug(f"Received message: {message}")
         try:
             data = json.loads(message)
-            if data.get('channel') != 'spot.tickers' or data.get('event') != 'update':
-                self.logger.debug("Message ignored: not a ticker update.")
-                return
-            result = data.get('result', {})
-            last_price = result.get('last')
-            if not last_price:
-                self.logger.debug("No last price found in the message.")
-                return
-            try:
-                price = float(last_price)
-                with self.price_lock:
-                    self.current_price = price
-                self.logger.debug(f"Updated current price: {price}")
-                self.on_price_callback(price)
-            except (ValueError, TypeError) as e:
-                self.logger.error(f"Price parse error: {e}")
+            channel = data.get('channel')
+            event = data.get('event')
+            
+            if channel == 'spot.tickers' and event == 'update':
+                result = data.get('result', {})
+                last_price = result.get('last')
+                if not last_price:
+                    self.logger.debug("No last price found in the message.")
+                    return
+                try:
+                    price = float(last_price)
+                    with self.price_lock:
+                        self.current_price = price
+                    self.logger.debug(f"Updated current price: {price}")
+                    self.on_price_callback(price)
+                except (ValueError, TypeError) as e:
+                    self.logger.error(f"Price parse error: {e}")
+
+            elif channel == 'spot.orders' and event == 'update':
+                # Process order execution events
+                result = data.get('result', {})
+                order_id = result.get('order_id')
+                status = result.get('status')
+                self.logger.debug(f"Order update received: Order ID: {order_id}, Status: {status}")
+                # For example, if status indicates the order is executed (could be "closed" or "filled")
+                if status in ["closed", "filled"]:
+                    self.logger.info(f"Order {order_id} executed with status: {status}")
+                    if self.on_order_callback:
+                        self.on_order_callback(result)
+            else:
+                self.logger.debug("Message ignored: not a subscribed event update.")
         except Exception as e:
             self.logger.error(f"Message processing failed: {e}")
 
@@ -52,16 +69,19 @@ class GateIOWebSocketClient:
         self.logger.info(f"WebSocket closed: {close_status_code} - {close_msg}")
 
     def on_open(self, ws):
-        self.logger.info("WebSocket connection opened, sending subscription message.")
+        self.logger.info("WebSocket connection opened, sending subscription messages.")
         try:
             timestamp = int(time.time())
+            # Create a signature for authentication (same for both subscriptions)
             signature_payload = f"channel=spot.tickers&event=subscribe&time={timestamp}"
             signature = hmac.new(
                 self.api_secret.encode('utf-8'),
                 signature_payload.encode('utf-8'),
                 hashlib.sha512
             ).hexdigest()
-            sub_msg = {
+
+            # Subscribe to ticker updates
+            ticker_sub_msg = {
                 "time": timestamp,
                 "channel": "spot.tickers",
                 "event": "subscribe",
@@ -72,8 +92,23 @@ class GateIOWebSocketClient:
                     "SIGN": signature
                 }
             }
-            ws.send(json.dumps(sub_msg))
-            self.logger.info("Subscription message sent.")
+            ws.send(json.dumps(ticker_sub_msg))
+            self.logger.info("Ticker subscription message sent.")
+
+            # Subscribe to order execution events
+            order_sub_msg = {
+                "time": timestamp,
+                "channel": "spot.orders",
+                "event": "subscribe",
+                "payload": [],  # Depending on the API, you might include specific filters here.
+                "auth": {
+                    "method": "api_key",
+                    "KEY": self.api_key,
+                    "SIGN": signature
+                }
+            }
+            ws.send(json.dumps(order_sub_msg))
+            self.logger.info("Order subscription message sent.")
         except Exception as e:
             self.logger.error(f"Subscription failed: {str(e)}")
 
