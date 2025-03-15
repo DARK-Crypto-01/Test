@@ -1,25 +1,23 @@
 api:
-  ws_base: "wss://ws.gate.io/v4"  # Add this line
+  ws_base: "wss://ws.gate.io/v4"
   base_url: "https://api.gateio.ws/api/v4"
-  key: "107b455a7a46b4e43aaf658613006a85"
-  secret: "a5de19e0ad40c57ad7f5d4b067747729b55a2cfbbc0f374c1b214a1cfd23f50e"
-  ioc: true   # enable IOC orders
-  
+  key: "YOUR_GATEIO_API_KEY"
+  secret: "YOUR_GATEIO_API_SECRET"
+  ioc: true   # enable Immediate-Or-Cancel orders
+
 # Trading Settings
 trading:
   currency_pair: "BTC_USDT"
-  trade_limit: 6  # max loops None for infinite
+  trade_limit: 6        # max loops; set to None for infinite trading
   price_poll_interval: 0.2  # seconds
-  fallback_price_precision: 4  # decimal places
+  fallback_price_precision: 4  # decimal places; used if market precision is not provided
   buy:
-    trigger_price_adjust: 1    # Last Number for Buy Trigger/Stop Price
-    limit_price_adjust: 2       # Last Number for Buy Order/Limit Price
-    amount_percentage: 100  # % of available USDT to use for buys
-    
+    fixed_usdt: 3       # Fixed amount in USDT to use for every buy order
+    trigger_price_adjust: 1    # Adjustment for Buy Trigger/Stop Price (in tick units)
+    limit_price_adjust: 2      # Adjustment for Buy Order/Limit Price (in tick units)
   sell:
-    trigger_price_adjust: 1     # Last Number for Sell Trigger/Stop Price
-    limit_price_adjust: 2      # Last Number for Sell Order/Limit Price
-    amount_percentage: 100  # % of available BTC to sell
+    trigger_price_adjust: 1    # Adjustment for Sell Trigger/Stop Price (in tick units)
+    limit_price_adjust: 2      # Adjustment for Sell Order/Limit Price (in tick units)
 
 # Logging
 logging:
