@@ -37,21 +37,6 @@ class GateIOAPIClient:
             self.logger.error(f"Cancel Error for order {order_id}: {str(e)}")
             return False
 
-    def cancel_all_orders(self, currency_pair):
-        self.logger.debug("Cancelling all orders...")
-        canceled_orders = []
-        open_orders = self.get_open_orders()
-        for order in open_orders:
-            if order.get('symbol') == self.symbol:
-                order_id = order.get('id')
-                if order_id and self.cancel_order(order_id):
-                    canceled_orders.append(order_id)
-        if canceled_orders:
-            self.logger.info(f"All orders canceled for {self.symbol}: {canceled_orders}")
-        else:
-            self.logger.info(f"No open orders to cancel for {self.symbol}.")
-        return canceled_orders
-
     def calculate_order_amount(self, side, limit_price):
         self.logger.debug(f"Calculating order amount for side: {side} at limit price: {limit_price}")
         balance = self.exchange.fetch_balance()
