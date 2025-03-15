@@ -35,22 +35,23 @@ class OrderManager:
 
         self.logger.error("Unable to place new order after several retries.")
 
-    def monitor_active_order(self, order, get_market_price_func, calculate_prices_func):
+    def monitor_active_order(self, get_market_price_func, calculate_prices_func):
         current_price = get_market_price_func()
         self.logger.debug(f"Monitoring active order. Current price: {current_price}, Order last price: {self.state.last_price}")
         if self.state.order_type == 'buy' and current_price < self.state.last_price:
             self.logger.info("Price dropped below last price; cancelling buy order.")
-            self.cancel_and_replace(order, get_market_price_func, calculate_prices_func)
+            self.cancel_and_replace(get_market_price_func, calculate_prices_func)
         elif self.state.order_type == 'sell' and current_price > self.state.last_price:
             self.logger.info("Price rose above last price; cancelling sell order.")
-            self.cancel_and_replace(order, get_market_price_func, calculate_prices_func)
+            self.cancel_and_replace(get_market_price_func, calculate_prices_func)
         else:
             self.logger.debug("No conditions met for cancellation.")
 
-    def cancel_and_replace(self, order, get_market_price_func, calculate_prices_func):
-        self.logger.info(f"Cancelling order: {order['id']} and replacing it.")
+    def cancel_and_replace(self, get_market_price_func, calculate_prices_func):
+        order_id = self.state.order_id
+        self.logger.info(f"Cancelling order: {order_id} and replacing it.")
         try:
-            if self.api.cancel_order(order['id']):
+            if self.api.cancel_order(order_id):
                 self.state.active = False
                 new_price = get_market_price_func()
                 trigger, limit = calculate_prices_func(new_price, self.state.order_type)
@@ -83,15 +84,12 @@ class OrderManager:
 
         for attempt in range(max_retries):
             try:
-                # 1. Cancel all existing orders
-                canceled = self.api.cancel_all_orders(self.config['trading']['currency_pair'])
-                open_orders = self.api.get_open_orders()
-                if open_orders:
-                    self.logger.error(f"Failed to cancel orders: {open_orders}")
-                    raise Exception("Order cancellation failed")
-                # 2. Reset state while preserving order type
+                if self.state.order_id:
+                    if not self.api.cancel_order(self.state.order_id):
+                        raise Exception(f"Failed to cancel order {self.state.order_id}")
                 self.state.active = False
                 self.state.order_type = preserved_order_type or 'buy'
+                self.state.order_id = None
                 recovered = True
                 break
             except Exception as e:
