@@ -1,4 +1,3 @@
-# trading_strategy.py
 import time
 import math
 import logging
@@ -12,6 +11,7 @@ class OrderState:
         self.order_type = None  # 'buy' or 'sell'
         self.last_price = None
         self.order_id = None
+        self.last_buy_amount = None  # To store executed buy amount from WebSocket
 
 class TradingStrategy:
     def __init__(self, config):
@@ -21,11 +21,11 @@ class TradingStrategy:
         self.logger = logging.getLogger("TradingStrategy")
         self.current_price = None
 
-        # Initialize WebSocket client with both callbacks
+        # Initialize WebSocket client with callbacks for price and order events
         self.ws_client = GateIOWebSocketClient(
             currency_pair=self.config['trading']['currency_pair'],
             on_price_callback=self.update_price,
-            on_order_callback=self.on_order_event,  # New callback for order events
+            on_order_callback=self.on_order_event,
             api_key=self.config['api']['key'],
             api_secret=self.config['api']['secret']
         )
@@ -35,16 +35,12 @@ class TradingStrategy:
         self.current_price = self._fetch_initial_price()
         self.logger.info(f"Initial market price: {self.current_price}")
 
-        # Determine tick size based on market precision
+        # Determine tick size based on market precision or fallback
         market = self.api.exchange.market(self.api.symbol)
         if 'price' in market['precision']:
             price_precision = market['precision']['price']
         else:
-            fallback = self.config['trading'].get('fallback_price_precision')
-            if fallback is None:
-                raise ValueError("Price precision not provided by exchange and no fallback configured.")
-            price_precision = fallback
-
+            price_precision = self.config['trading'].get('fallback_price_precision')
         self.tick_size = 10 ** (-price_precision)
         self.logger.info(f"Determined tick size: {self.tick_size} (precision: {price_precision} digits)")
 
@@ -66,20 +62,19 @@ class TradingStrategy:
         self.logger.debug(f"Price updated via callback: {price}")
 
     def on_order_event(self, event):
-        """Called when an order event is received via websocket.
+        """Called when an order event is received via WebSocket.
            If the event corresponds to the current active order and indicates execution,
-           call the order manager’s execution handler.
+           pass the event to the order manager for processing.
         """
         event_order_id = event.get('order_id')
         self.logger.debug(f"Order event received: {event}")
         if self.state.active and event_order_id == self.state.order_id:
             self.logger.info(f"Active order {event_order_id} executed. Processing execution event.")
-            self.order_manager.handle_order_execution()
+            self.order_manager.handle_order_execution(event)
 
     def _calculate_prices(self, last_price, order_type):
         self.logger.debug(f"Calculating prices for {order_type} order with last price: {last_price}")
         tick_size = self.tick_size
-        
         if order_type == 'buy':
             trigger_adjust = self.config['trading']['buy']['trigger_price_adjust']
             limit_adjust = self.config['trading']['buy']['limit_price_adjust']
@@ -104,7 +99,7 @@ class TradingStrategy:
         start_time = time.time()
         while self.current_price is None:
             if time.time() - start_time > 5:
-                self.logger.error("No price update received from websocket within 5 seconds.")
+                self.logger.error("No price update received from WebSocket within 5 seconds.")
                 break
             time.sleep(0.01)
         self.logger.debug(f"Current market price is: {self.current_price}")
@@ -123,9 +118,9 @@ class TradingStrategy:
                     self.logger.info("No active order - placing new order")
                     self.order_manager.place_new_order(self._calculate_prices, self._get_market_price)
                 else:
-                    # Monitor only the order stored in state
                     self.order_manager.monitor_active_order(self._get_market_price, self._calculate_prices)
                 time.sleep(self.config['trading']['price_poll_interval'])
+                trade_count += 1
             except KeyboardInterrupt:
                 self.logger.info("Stopped by user")
                 break
