@@ -1,4 +1,3 @@
-# gateio_websocket.py
 import time
 import json
 import threading
@@ -15,7 +14,7 @@ class GateIOWebSocketClient:
         self.api_secret = api_secret
         self.currency_pair = currency_pair.replace('_', '')  # e.g. BTCUSDT
         self.on_price_callback = on_price_callback
-        self.on_order_callback = on_order_callback  # New callback for order events
+        self.on_order_callback = on_order_callback  # Callback for order events
         self.ws_url = "wss://ws.gate.io/v4"
         self.ws = None
         self.thread = None
@@ -47,12 +46,10 @@ class GateIOWebSocketClient:
                     self.logger.error(f"Price parse error: {e}")
 
             elif channel == 'spot.orders' and event == 'update':
-                # Process order execution events
                 result = data.get('result', {})
                 order_id = result.get('order_id')
                 status = result.get('status')
                 self.logger.debug(f"Order update received: Order ID: {order_id}, Status: {status}")
-                # For example, if status indicates the order is executed (could be "closed" or "filled")
                 if status in ["closed", "filled"]:
                     self.logger.info(f"Order {order_id} executed with status: {status}")
                     if self.on_order_callback:
@@ -72,7 +69,6 @@ class GateIOWebSocketClient:
         self.logger.info("WebSocket connection opened, sending subscription messages.")
         try:
             timestamp = int(time.time())
-            # Build signature for ticker subscription
             ticker_payload = f"channel=spot.tickers&event=subscribe&time={timestamp}"
             ticker_signature = hmac.new(
                 self.api_secret.encode('utf-8'),
@@ -80,7 +76,6 @@ class GateIOWebSocketClient:
                 hashlib.sha512
             ).hexdigest()
 
-            # Subscribe to ticker updates
             ticker_sub_msg = {
                 "time": timestamp,
                 "channel": "spot.tickers",
@@ -95,7 +90,6 @@ class GateIOWebSocketClient:
             ws.send(json.dumps(ticker_sub_msg))
             self.logger.info("Ticker subscription message sent.")
 
-            # Build signature for order subscription (using correct channel)
             order_payload = f"channel=spot.orders&event=subscribe&time={timestamp}"
             order_signature = hmac.new(
                 self.api_secret.encode('utf-8'),
@@ -103,12 +97,11 @@ class GateIOWebSocketClient:
                 hashlib.sha512
             ).hexdigest()
 
-            # Subscribe to order execution events
             order_sub_msg = {
                 "time": timestamp,
                 "channel": "spot.orders",
                 "event": "subscribe",
-                "payload": [],  # Adjust or add filters here if required by Gate.io docs.
+                "payload": [],
                 "auth": {
                     "method": "api_key",
                     "KEY": self.api_key,
@@ -148,10 +141,10 @@ class GateIOWebSocketClient:
                 try:
                     self.logger.info("Establishing WebSocket connection...")
                     self.run()
-                    retry_count = 0  # Reset on successful connection
+                    retry_count = 0
                 except Exception as e:
                     retry_count += 1
-                    timeout = min(2 ** retry_count, 30)  # Exponential backoff
+                    timeout = min(2 ** retry_count, 30)
                     self.logger.error(f"WebSocket connection error. Reconnecting in {timeout}s: {e}")
                     time.sleep(timeout)
         self.thread = threading.Thread(target=run_forever, daemon=True)
