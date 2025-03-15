@@ -37,40 +37,48 @@ class GateIOAPIClient:
             self.logger.error(f"Cancel Error for order {order_id}: {str(e)}")
             return False
 
-    def calculate_order_amount(self, side, limit_price):
+    def cancel_all_orders(self):
+        self.logger.debug("Cancelling all orders...")
+        canceled_orders = []
+        open_orders = self.get_open_orders()
+        for order in open_orders:
+            if order.get('symbol') == self.symbol:
+                order_id = order.get('id')
+                if order_id and self.cancel_order(order_id):
+                    canceled_orders.append(order_id)
+        if canceled_orders:
+            self.logger.info(f"All orders canceled for {self.symbol}: {canceled_orders}")
+        else:
+            self.logger.info(f"No open orders to cancel for {self.symbol}.")
+        return canceled_orders
+
+    def calculate_order_amount(self, side, limit_price, custom_amount=None):
         self.logger.debug(f"Calculating order amount for side: {side} at limit price: {limit_price}")
-        balance = self.exchange.fetch_balance()
-        base, quote = self.symbol.split('/')
-    
         try:
             if side == 'buy':
-                buy_pct = self.trading_config['buy']['amount_percentage']
-                available_quote = balance[quote]['free']
-                self.logger.debug(f"Available {quote}: {available_quote}")
-                quote_amount = (available_quote * buy_pct) / 100
-                amount = quote_amount / limit_price
-                self.logger.debug(f"Calculated buy amount (base currency): {amount}")
+                fixed_usdt = self.trading_config['buy'].get('fixed_usdt')
+                if fixed_usdt is None:
+                    raise ValueError("fixed_usdt is not set in the configuration for buy orders.")
+                # Convert fixed USDT to base currency amount using the current limit price
+                amount = float(fixed_usdt) / limit_price
+                self.logger.debug(f"Calculated fixed buy amount (base currency): {amount}")
                 return amount
             elif side == 'sell':
-                sell_pct = self.trading_config['sell']['amount_percentage']
-                available_base = balance[base]['free']
-                self.logger.debug(f"Available {base}: {available_base}")
-                amount = (available_base * sell_pct) / 100
-                self.logger.debug(f"Calculated sell amount (base currency): {amount}")
-                return amount
+                if custom_amount is not None:
+                    self.logger.debug(f"Using custom sell amount: {custom_amount}")
+                    return custom_amount
+                else:
+                    raise ValueError("No custom sell amount provided for sell order.")
             else:
                 raise ValueError("Invalid side specified")
-        except KeyError as e:
-            self.logger.error(f"Balance check failed: {str(e)}")
-            return 0
-        except ZeroDivisionError:
-            self.logger.error("Invalid zero price encountered")
+        except Exception as e:
+            self.logger.error(f"Order amount calculation error: {str(e)}")
             return 0
 
-    def place_stop_limit_order(self, order_type, trigger_price, limit_price):
+    def place_stop_limit_order(self, order_type, trigger_price, limit_price, custom_amount=None):
         self.logger.info(f"Placing {order_type} stop-limit order with trigger: {trigger_price} and limit: {limit_price}")
         try:
-            amount = self.calculate_order_amount(order_type, limit_price)
+            amount = custom_amount if custom_amount is not None else self.calculate_order_amount(order_type, limit_price)
             if amount <= 0:
                 self.logger.error("Invalid order amount calculated; order will not be placed.")
                 return None
@@ -87,8 +95,8 @@ class GateIOAPIClient:
                 'amount': amount
             }
 
-            # Add IOC parameter if enabled in config
-            if self.config.get('api', {}).get('ioc', False):
+            # Add IOC parameter if enabled in configuration
+            if self.config.get('ioc', False):
                 params['timeInForce'] = 'IOC'
 
             order = self.exchange.create_order(
