@@ -1,7 +1,8 @@
+# main.py
 import logging
 import sys
 import yaml
-from trading_strategy import TradingStrategy  # Updated import to match new file name
+from trading_strategy import TradingStrategy
 
 def load_config():
     try:
