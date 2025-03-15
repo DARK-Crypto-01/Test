@@ -20,7 +20,7 @@ class TradingStrategy:
         self.logger = logging.getLogger("TradingStrategy")
         self.current_price = None
 
-        # Initialize WebSocket client as before
+        # Initialize WebSocket client
         self.ws_client = GateIOWebSocketClient(
             currency_pair=self.config['trading']['currency_pair'],
             on_price_callback=self.update_price,
@@ -33,18 +33,16 @@ class TradingStrategy:
         self.current_price = self._fetch_initial_price()
         self.logger.info(f"Initial market price: {self.current_price}")
 
-        # Fetch market details once and determine price precision
+        # Determine tick size based on market precision
         market = self.api.exchange.market(self.api.symbol)
         if 'price' in market['precision']:
             price_precision = market['precision']['price']
         else:
-            # Use fallback value from config.yaml if provided, else raise error.
             fallback = self.config['trading'].get('fallback_price_precision')
             if fallback is None:
                 raise ValueError("Price precision not provided by exchange and no fallback configured.")
             price_precision = fallback
 
-        # Calculate and store tick size using the determined precision.
         self.tick_size = 10 ** (-price_precision)
         self.logger.info(f"Determined tick size: {self.tick_size} (precision: {price_precision} digits)")
 
@@ -67,7 +65,7 @@ class TradingStrategy:
 
     def _calculate_prices(self, last_price, order_type):
         self.logger.debug(f"Calculating prices for {order_type} order with last price: {last_price}")
-        tick_size = self.tick_size  # use the stored tick size
+        tick_size = self.tick_size
         
         if order_type == 'buy':
             trigger_adjust = self.config['trading']['buy']['trigger_price_adjust']
@@ -82,8 +80,6 @@ class TradingStrategy:
         else:
             raise ValueError("Invalid order type specified")
         
-        # Rounding using the determined precision.
-        # Compute the number of decimal places from tick_size:
         decimal_places = -int(math.log10(tick_size))
         trigger = round(trigger, decimal_places)
         limit = round(limit, decimal_places)
@@ -110,23 +106,14 @@ class TradingStrategy:
                 self.logger.info("Trade limit reached. Exiting trading loop.")
                 break
             try:
-                open_orders = self.api.get_open_orders()
-                self.logger.debug(f"Open orders: {open_orders}")
-                if not open_orders:
-                    if not self.state.active:
-                        self.logger.info("No active orders - placing initial order")
-                        self.order_manager.place_new_order(self._calculate_prices, self._get_market_price)
-                    else:
-                        self.logger.info("Order executed successfully")
-                        self.order_manager.handle_order_execution()
-                        trade_count += 1  # Increment only when order execution is confirmed
+                if not self.state.active:
+                    self.logger.info("No active order - placing new order")
+                    self.order_manager.place_new_order(self._calculate_prices, self._get_market_price)
                 else:
-                    self.logger.debug("Monitoring existing orders")
-                    self.order_manager.monitor_active_order(
-                        open_orders[0],
-                        self._get_market_price,
-                        self._calculate_prices
-                    )
+                    # Monitor only the order stored in state
+                    self.order_manager.monitor_active_order(self._get_market_price, self._calculate_prices)
+                    # If the order gets executed, handle the execution logic and count the trade.
+                    # (This may be integrated inside the monitor function depending on execution feedback.)
                 time.sleep(self.config['trading']['price_poll_interval'])
             except KeyboardInterrupt:
                 self.logger.info("Stopped by user")
