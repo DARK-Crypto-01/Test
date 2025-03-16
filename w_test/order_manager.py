@@ -2,11 +2,11 @@ import logging
 import time
 
 class OrderManager:
-    def __init__(self, api, state, config, ws_client):
+    def __init__(self, api, state, config, ws_manager):
         self.api = api
         self.state = state
         self.config = config
-        self.ws_client = ws_client
+        self.ws_manager = ws_manager
         self.logger = logging.getLogger("OrderManager")
 
     def place_new_order(self, calculate_prices_func, get_market_price_func):
@@ -29,8 +29,9 @@ class OrderManager:
                     self.logger.error("No last buy amount available for sell order; cannot calculate amount.")
                     return
             amount = custom_amount if custom_amount is not None else self.api.calculate_order_amount(order_type, limit)
-            # Try WebSocket order placement first
-            order = self.ws_client.place_stop_limit_order_ws(order_type, trigger, limit, amount)
+            # Use the first ws client for non-parallel orders.
+            ws_client = self.ws_manager.get_ws_client()
+            order = ws_client.place_stop_limit_order_ws(order_type, trigger, limit, amount)
             if not order:
                 self.logger.error("WebSocket order placement failed; falling back to API.")
                 order = self.api.place_stop_limit_order(order_type, trigger, limit, custom_amount=custom_amount)
@@ -65,7 +66,8 @@ class OrderManager:
         order_id = self.state.order_id
         self.logger.info(f"Cancelling order: {order_id} and replacing it.")
         try:
-            if self.ws_client.cancel_order_ws(order_id):
+            ws_client = self.ws_manager.get_ws_client()
+            if ws_client.cancel_order_ws(order_id):
                 self.state.active = False
                 new_price = get_market_price_func()
                 trigger, limit = calculate_prices_func(new_price, self.state.order_type)
@@ -77,8 +79,8 @@ class OrderManager:
                     else:
                         self.logger.error("No last buy amount available for sell order; cannot calculate amount.")
                         return
-                new_order = self.ws_client.place_stop_limit_order_ws(self.state.order_type, trigger, limit, 
-                                                                     self.api.calculate_order_amount(self.state.order_type, limit) if custom_amount is None else custom_amount)
+                amount = custom_amount if custom_amount is not None else self.api.calculate_order_amount(self.state.order_type, limit)
+                new_order = ws_client.place_stop_limit_order_ws(self.state.order_type, trigger, limit, amount)
                 if not new_order:
                     self.logger.error("WebSocket replacement order failed; falling back to API.")
                     new_order = self.api.place_stop_limit_order(self.state.order_type, trigger, limit, custom_amount=custom_amount)
@@ -123,7 +125,8 @@ class OrderManager:
         for attempt in range(max_retries):
             try:
                 if self.state.order_id:
-                    if not self.ws_client.cancel_order_ws(self.state.order_id):
+                    ws_client = self.ws_manager.get_ws_client()
+                    if not ws_client.cancel_order_ws(self.state.order_id):
                         raise Exception(f"Failed to cancel order {self.state.order_id}")
                 self.state.active = False
                 self.state.order_type = preserved_order_type or 'buy'
