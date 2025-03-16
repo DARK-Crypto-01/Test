@@ -2,7 +2,7 @@ import time
 import math
 import logging
 from gateio_api import GateIOAPIClient
-from gateio_websocket import GateIOWebSocketClient
+from ws_manager import WSManager
 from order_manager import OrderManager
 from parallel_order_manager import ParallelOrderManager
 
@@ -18,17 +18,9 @@ class TradingStrategy:
         self.api = GateIOAPIClient(config)
         self.state = OrderState()
         self.logger = logging.getLogger("TradingStrategy")
-        # Initialize WebSocket client with callbacks for price and order events
-        self.ws_client = GateIOWebSocketClient(
-            currency_pair=self.config['trading']['currency_pair'],
-            on_price_callback=self.update_price,
-            on_order_callback=self.on_order_event,
-            api_key=self.config['api']['key'],
-            api_secret=self.config['api']['secret'],
-            config=self.config['api']
-        )
-        self.ws_client.start()
-        self.logger.info("WebSocket client started. Fetching initial market price...")
+
+        # Fetch initial market price via REST API
+        self.logger.info("Fetching initial market price...")
         self.current_price = self._fetch_initial_price()
         self.logger.info(f"Initial market price: {self.current_price}")
 
@@ -45,9 +37,23 @@ class TradingStrategy:
         self.parallel_instances = self._determine_instances(self.current_price)
         self.logger.info(f"Number of parallel order instances: {self.parallel_instances}")
 
-        # Instantiate order managers with the ws_client for primary order management
-        self.order_manager = OrderManager(self.api, self.state, self.config, self.ws_client)
-        self.parallel_order_manager = ParallelOrderManager(self.api, self.state, self.config, self.ws_client)
+        # Create a WSManager instance to manage multiple WebSocket connections.
+        max_ws_instances = self.config.get('websocket', {}).get('max_instances_per_ws', 5)
+        from math import ceil  # just in case
+        self.ws_manager = WSManager(
+            currency_pair=self.config['trading']['currency_pair'],
+            on_price_callback=self.update_price,
+            on_order_callback=self.on_order_event,
+            api_key=self.config['api']['key'],
+            api_secret=self.config['api']['secret'],
+            config=self.config['api'],
+            total_instances=self.parallel_instances,
+            max_instances_per_ws=max_ws_instances
+        )
+
+        # Instantiate order managers with the WSManager for primary order management.
+        self.order_manager = OrderManager(self.api, self.state, self.config, self.ws_manager)
+        self.parallel_order_manager = ParallelOrderManager(self.api, self.state, self.config, self.ws_manager)
 
     def _fetch_initial_price(self):
         try:
@@ -65,7 +71,7 @@ class TradingStrategy:
 
     def on_order_event(self, event):
         """
-        Called when an order event is received via WebSocket.
+        Called when an order event is received via any of the WebSocket connections.
         Dispatches the event to the appropriate parallel instance based on order_id.
         """
         order_id = event.get('order_id')
