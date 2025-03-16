@@ -2,7 +2,7 @@ import logging
 import time
 
 class ParallelOrderManager:
-    def __init__(self, api, state, config, ws_client):
+    def __init__(self, api, state, config, ws_manager):
         """
         The state object is expected to have an 'active_orders' dictionary,
         where each key is an instance index and its value is a dictionary containing:
@@ -16,7 +16,7 @@ class ParallelOrderManager:
         self.api = api
         self.state = state
         self.config = config
-        self.ws_client = ws_client
+        self.ws_manager = ws_manager
         self.logger = logging.getLogger("ParallelOrderManager")
 
     def place_new_orders(self, calculate_prices_func, get_market_price_func, total_instances):
@@ -37,7 +37,8 @@ class ParallelOrderManager:
                     self.logger.error(f"Instance {instance_index}: No last buy amount available for sell order; skipping.")
                     continue
             amount = custom_amount if custom_amount is not None else self.api.calculate_order_amount(order_type, limit)
-            order = self.ws_client.place_stop_limit_order_ws(order_type, trigger, limit, amount)
+            ws_client = self.ws_manager.get_ws_client(instance_index)
+            order = ws_client.place_stop_limit_order_ws(order_type, trigger, limit, amount)
             if not order:
                 self.logger.error(f"Instance {instance_index}: WebSocket order placement failed; falling back to API.")
                 order = self.api.place_stop_limit_order(order_type, trigger, limit, custom_amount=custom_amount)
@@ -76,7 +77,8 @@ class ParallelOrderManager:
         order_type = order_state.get('order_type')
         self.logger.info(f"Instance {instance_index}: Cancelling order {order_id} and replacing it.")
         try:
-            if self.ws_client.cancel_order_ws(order_id):
+            ws_client = self.ws_manager.get_ws_client(instance_index)
+            if ws_client.cancel_order_ws(order_id):
                 new_price = get_market_price_func()
                 trigger, limit = calculate_prices_func(new_price, order_type, instance_index)
                 custom_amount = None
@@ -88,7 +90,7 @@ class ParallelOrderManager:
                         self.logger.error(f"Instance {instance_index}: No last buy amount available for sell order; cannot replace.")
                         return
                 amount = custom_amount if custom_amount is not None else self.api.calculate_order_amount(order_type, limit)
-                new_order = self.ws_client.place_stop_limit_order_ws(order_type, trigger, limit, amount)
+                new_order = ws_client.place_stop_limit_order_ws(order_type, trigger, limit, amount)
                 if not new_order:
                     self.logger.error(f"Instance {instance_index}: WebSocket replacement order failed; falling back to API.")
                     new_order = self.api.place_stop_limit_order(order_type, trigger, limit, custom_amount=custom_amount)
@@ -142,7 +144,8 @@ class ParallelOrderManager:
             if order_state:
                 order_id = order_state.get('order_id')
                 try:
-                    if self.ws_client.cancel_order_ws(order_id):
+                    ws_client = self.ws_manager.get_ws_client(instance_index)
+                    if ws_client.cancel_order_ws(order_id):
                         self.logger.info(f"Instance {instance_index}: Order {order_id} cancelled during recovery.")
                     else:
                         self.logger.error(f"Instance {instance_index}: Failed to cancel order {order_id} during recovery.")
@@ -156,13 +159,14 @@ class ParallelOrderManager:
 
     def graceful_shutdown(self):
         self.logger.info("Initiating graceful shutdown of bot-managed orders...")
-        # Cancel all buy orders immediately.
+        # Process buy orders: cancel them instantly.
         for instance_index, order_state in list(self.state.active_orders.items()):
             if order_state.get('order_type') == 'buy':
                 order_id = order_state.get('order_id')
                 self.logger.info(f"Instance {instance_index}: Cancelling bot-placed buy order {order_id}")
                 try:
-                    self.ws_client.cancel_order_ws(order_id)
+                    ws_client = self.ws_manager.get_ws_client(instance_index)
+                    ws_client.cancel_order_ws(order_id)
                 except Exception as e:
                     self.logger.error(f"Instance {instance_index}: Failed to cancel buy order {order_id}: {e}")
                 del self.state.active_orders[instance_index]
@@ -180,13 +184,14 @@ class ParallelOrderManager:
                 limit_price = order_state.get('limit_price')
                 self.logger.info(f"Instance {instance_index}: Processing sell order {order_id} with limit price {limit_price}")
                 try:
-                    if self.ws_client.cancel_order_ws(order_id):
+                    ws_client = self.ws_manager.get_ws_client(instance_index)
+                    if ws_client.cancel_order_ws(order_id):
                         self.logger.info(f"Instance {instance_index}: Cancelled sell order {order_id}")
                         amount = order_state.get('executed_amount')
                         if not amount or amount <= 0:
                             self.logger.error(f"Instance {instance_index}: No valid executed amount to sell; skipping market order.")
                         else:
-                            market_order = self.ws_client.place_market_order_ws('sell', amount)
+                            market_order = ws_client.place_market_order_ws('sell', amount)
                             if market_order:
                                 self.logger.info(f"Instance {instance_index}: Market sell order placed: {market_order}")
                             else:
