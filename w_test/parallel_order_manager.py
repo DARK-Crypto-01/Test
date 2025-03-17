@@ -110,32 +110,23 @@ class ParallelOrderManager:
             self.logger.error(f"Instance {instance_index}: Error during cancel and replace: {str(e)}")
             self.recover_state(instance_index)
 
-    def handle_order_execution(self, instance_index, execution_event):
-        self.logger.info(f"Instance {instance_index}: Order executed successfully via WebSocket event.")
-        order_state = self.state.active_orders.get(instance_index)
+    def handle_order_execution(self, order_id, event):
+        """
+        Handles order execution using the exchange's order_id (not instance_index).
+        """
+        order_state = self.state.active_orders.get(order_id)
         if not order_state:
-            self.logger.error(f"Instance {instance_index}: No active order state found for execution event.")
+            self.logger.error(f"No active order found for {order_id}")
             return
+
         order_type = order_state.get('order_type')
         if order_type == 'buy':
-            executed_amount = 0
-            if 'filled' in execution_event:
-                try:
-                    executed_amount = float(execution_event.get('filled', 0))
-                except Exception as e:
-                    self.logger.error(f"Instance {instance_index}: Error parsing filled amount: {e}")
-            else:
-                try:
-                    executed_amount = float(execution_event.get('amount', 0))
-                except Exception as e:
-                    self.logger.error(f"Instance {instance_index}: Error parsing amount: {e}")
-            order_state['executed_amount'] = executed_amount
+            executed_amount = event.get('filled', 0.0)
             self.state.last_buy_amount = executed_amount
-            self.logger.info(f"Instance {instance_index}: Stored executed buy amount: {executed_amount}")
-        new_order_type = 'sell' if order_type == 'buy' else 'buy'
-        self.logger.info(f"Instance {instance_index}: Flipping order type from {order_type} to {new_order_type}")
-        if instance_index in self.state.active_orders:
-            del self.state.active_orders[instance_index]
+            self.logger.info(f"Buy order {order_id} executed. Amount: {executed_amount}")
+
+        # Remove order from active_orders
+        del self.state.active_orders[order_id]
 
     def recover_state(self, instance_index=None):
         self.logger.info("Initiating recovery of order state for parallel orders.")
