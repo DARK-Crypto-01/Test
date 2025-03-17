@@ -208,6 +208,49 @@ class GateIOWebSocketClient:
             self.logger.error(f"WebSocket order placement failed: {e}")
             return None
 
+    def cancel_order_ws(self, order_id):
+        """
+        Cancels an existing order via the WebSocket.
+    
+        Args:
+            order_id (str): The exchange's order ID to cancel.
+    
+        Returns:
+            bool: True if the cancellation message was sent successfully; False otherwise.
+        """
+        self.logger.info(f"Cancelling order {order_id} via WebSocket")
+        try:
+            timestamp = int(time.time())
+            # Construct the payload string for signature calculation.
+            # Note: The cancellation request is sent on the "spot.order" channel with event "cancel".
+            payload_str = f"channel=spot.order&event=cancel&time={timestamp}"
+            signature = hmac.new(
+                self.api_secret.encode('utf-8'),
+                payload_str.encode('utf-8'),
+                hashlib.sha512
+            ).hexdigest()
+        
+            cancel_msg = {
+                "time": timestamp,
+                "channel": "spot.order",  # Use "spot.order" for sending cancellation requests.
+                "event": "cancel",
+                # Payload is a list of order IDs to cancel.
+                "payload": [order_id],
+                "auth": {
+                    "method": "api_key",
+                    "KEY": self.api_key,
+                    "SIGN": signature
+                }
+            }
+        
+            # Send the cancellation request over the active WebSocket connection.
+            self.ws.send(json.dumps(cancel_msg))
+            self.logger.info(f"Cancellation message for order {order_id} sent successfully.")
+            return True
+        except Exception as e:
+            self.logger.error(f"WebSocket order cancellation failed for order {order_id}: {e}")
+            return False
+
     # Revised method for placing a market order via WebSocket
     def place_market_order_ws(self, order_type, amount, callback=None):
         self.logger.info(f"Placing market {order_type} order via WebSocket for amount: {amount}")
