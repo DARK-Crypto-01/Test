@@ -49,22 +49,29 @@ class GateIOWebSocketClient:
                     self.on_price_callback(price)
                 except (ValueError, TypeError) as e:
                     self.logger.error(f"Price parse error: {e}")
-            elif channel == 'spot.orders':
-                # Process order responses
-                result = data.get('result', [])
-                # result may be a list of order objects
-                for order in result:
-                    client_order_id = order.get('client_order_id')
-                    if client_order_id:
-                        # Retrieve and call the registered callback for this order
-                        with self.pending_orders_lock:
-                            callback = self.pending_orders.pop(client_order_id, None)
-                        if callback:
-                            callback(order)
-                        else:
-                            # Global callback for orders if no specific pending callback exists
-                            if self.on_order_callback:
-                                self.on_order_callback(order)
+            
+            elif channel == 'spot.orders':  # Fix typo: 'spot.order' → 'spot.orders'
+                event = data.get('event')
+                result = data.get('result', {})
+                order_id = result.get('id')
+                client_order_id = result.get('client_order_id')
+
+                if event == 'order.created':
+                    self.logger.info(f"Order created: {result}")
+                    # Match to pending_orders via client_order_id
+                    with self.pending_orders_lock:
+                        callback = self.pending_orders.pop(client_order_id, None)
+                    if callback:
+                        callback(order_id, result)  # Pass real order_id to callback
+                    else:
+                        # Forward to global handler
+                        if self.on_order_callback:
+                            self.on_order_callback(order_id, result)
+                elif event in ['order.update', 'order.canceled']:
+                    # Forward all updates to global handler using exchange's order_id
+                    if self.on_order_callback:
+                        self.on_order_callback(order_id, result)
+                        
             else:
                 self.logger.debug("Message ignored: not a subscribed event update.")
         except Exception as e:
