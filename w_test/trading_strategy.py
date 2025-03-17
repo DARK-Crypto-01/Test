@@ -69,18 +69,30 @@ class TradingStrategy:
         self.current_price = price
         self.logger.debug(f"Price updated via callback: {price}")
 
-    def on_order_event(self, event):
+    def on_order_event(self, order_id, event):
         """
-        Called when an order event is received via any of the WebSocket connections.
-        Dispatches the event to the appropriate parallel instance based on order_id.
+         Handles order events (creation, fills, cancellations) using the exchange's order_id.
         """
-        order_id = event.get('order_id')
-        self.logger.debug(f"Order event received: {event}")
-        for instance_index, order_state in self.state.active_orders.items():
-            if order_state.get('order_id') == order_id:
-                self.logger.info(f"Instance {instance_index}: Order {order_id} executed. Processing execution event.")
-                self.parallel_order_manager.handle_order_execution(instance_index, event)
-                break
+        status = event.get('status')
+        self.logger.debug(f"Order event received for {order_id}: {event}")
+
+        # Remove from active_orders if order is completed
+        if status in ["closed", "filled", "canceled"]:
+            if order_id in self.state.active_orders:
+                del self.state.active_orders[order_id]
+            self.logger.info(f"Order {order_id} executed with status: {status}")
+    
+        # Update active_orders with real order data
+        if status == "open":
+            self.state.active_orders[order_id] = {
+                'order_id': order_id,
+                'symbol': event.get('symbol'),
+                'side': event.get('side'),
+                'price': float(event.get('price')),
+                'amount': float(event.get('amount')),
+                'filled': float(event.get('filled', 0.0)),
+                'status': status
+                }
 
     def _calculate_prices(self, last_price, order_type, instance_index=0):
         self.logger.debug(f"Calculating prices for {order_type} order with last price: {last_price} for instance {instance_index}")
