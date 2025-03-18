@@ -1,5 +1,28 @@
 import logging
 import time
+import math
+
+def round_up_to_one_significant(x):
+    """
+    Rounds a positive number up to one significant figure.
+    Examples:
+      801 -> 900
+      0.000801 -> 0.0009
+    """
+    if x == 0:
+        return 0
+    exponent = math.floor(math.log10(abs(x)))
+    factor = 10 ** exponent
+    first_digit = int(abs(x) / factor)
+    # If any fraction exists beyond the first digit, bump it up by one.
+    if abs(x) > first_digit * factor:
+        first_digit += 1
+        # Handle the rollover case (e.g. 9 -> 10)
+        if first_digit == 10:
+            first_digit = 1
+            exponent += 1
+            factor = 10 ** exponent
+    return first_digit * factor
 
 class OrderManager:
     def __init__(self, api, state, config, ws_manager):
@@ -22,9 +45,12 @@ class OrderManager:
             custom_amount = None
             if order_type == 'sell':
                 if self.state.last_buy_amount is not None:
-                    fee = 0.001  # 0.1% trading fee
-                    custom_amount = self.state.last_buy_amount * (1 - fee)
-                    self.logger.debug(f"Calculated sell order amount from last buy order: {custom_amount}")
+                    fee_rate = self.config['trading'].get('sell_trading_fee', 0.001)
+                    raw_fee = self.state.last_buy_amount * fee_rate
+                    rounded_fee = round_up_to_one_significant(raw_fee)
+                    custom_amount = self.state.last_buy_amount - rounded_fee
+                    self.logger.debug(f"Calculated sell order amount from last buy order: {custom_amount} "
+                                      f"(raw fee: {raw_fee}, rounded fee: {rounded_fee})")
                 else:
                     self.logger.error("No last buy amount available for sell order; cannot calculate amount.")
                     return
@@ -74,8 +100,10 @@ class OrderManager:
                 custom_amount = None
                 if self.state.order_type == 'sell':
                     if self.state.last_buy_amount is not None:
-                        fee = 0.001  # 0.1% fee
-                        custom_amount = self.state.last_buy_amount * (1 - fee)
+                        fee_rate = self.config['trading'].get('sell_trading_fee', 0.001)
+                        raw_fee = self.state.last_buy_amount * fee_rate
+                        rounded_fee = round_up_to_one_significant(raw_fee)
+                        custom_amount = self.state.last_buy_amount - rounded_fee
                     else:
                         self.logger.error("No last buy amount available for sell order; cannot calculate amount.")
                         return
@@ -139,4 +167,4 @@ class OrderManager:
 
         if not recovered:
             self.logger.critical("State recovery failed after multiple attempts!")
-        self.logger.info(f"State recovery completed. Resuming with order type: {self.state.order_type}")
+        self.logger.info(f"State recovery completed. Resuming with order type: {self.state.order_type}") 
