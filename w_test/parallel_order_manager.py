@@ -1,5 +1,27 @@
 import logging
 import time
+import math
+
+# parallel_order_manager
+def round_up_to_one_significant(x):
+    """
+    Rounds a positive number up to one significant figure.
+    Examples:
+      801 -> 900
+      0.000801 -> 0.0009
+    """
+    if x == 0:
+        return 0
+    exponent = math.floor(math.log10(abs(x)))
+    factor = 10 ** exponent
+    first_digit = int(abs(x) / factor)
+    if abs(x) > first_digit * factor:
+        first_digit += 1
+        if first_digit == 10:
+            first_digit = 1
+            exponent += 1
+            factor = 10 ** exponent
+    return first_digit * factor
 
 class ParallelOrderManager:
     def __init__(self, api, state, config, ws_manager):
@@ -30,9 +52,12 @@ class ParallelOrderManager:
             custom_amount = None
             if order_type == 'sell':
                 if self.state.last_buy_amount is not None:
-                    fee = 0.001  # 0.1% trading fee
-                    custom_amount = self.state.last_buy_amount * (1 - fee)
-                    self.logger.debug(f"Instance {instance_index}: Calculated sell order amount: {custom_amount}")
+                    fee_rate = self.config['trading'].get('sell_trading_fee', 0.001)
+                    raw_fee = self.state.last_buy_amount * fee_rate
+                    rounded_fee = round_up_to_one_significant(raw_fee)
+                    custom_amount = self.state.last_buy_amount - rounded_fee
+                    self.logger.debug(f"Instance {instance_index}: Calculated sell order amount: {custom_amount} "
+                                      f"(raw fee: {raw_fee}, rounded fee: {rounded_fee})")
                 else:
                     self.logger.error(f"Instance {instance_index}: No last buy amount available for sell order; skipping.")
                     continue
@@ -47,7 +72,7 @@ class ParallelOrderManager:
                 self.state.active_orders[instance_index] = {
                     'order_id': order.get('id', None),
                     'last_price': last_price,
-                    'limit_price': limit,  # Store limit price for shutdown ordering
+                    'limit_price': limit,
                     'order_type': order_type
                 }
             else:
@@ -84,8 +109,10 @@ class ParallelOrderManager:
                 custom_amount = None
                 if order_type == 'sell':
                     if self.state.last_buy_amount is not None:
-                        fee = 0.001
-                        custom_amount = self.state.last_buy_amount * (1 - fee)
+                        fee_rate = self.config['trading'].get('sell_trading_fee', 0.001)
+                        raw_fee = self.state.last_buy_amount * fee_rate
+                        rounded_fee = round_up_to_one_significant(raw_fee)
+                        custom_amount = self.state.last_buy_amount - rounded_fee
                     else:
                         self.logger.error(f"Instance {instance_index}: No last buy amount available for sell order; cannot replace.")
                         return
