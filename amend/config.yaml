@@ -1,0 +1,34 @@
+api:
+  ws_base: "wss://ws.gate.io/v4"
+  base_url: "https://api.gateio.ws/api/v4"
+  key: "YOUR_GATEIO_API_KEY"
+  secret: "YOUR_GATEIO_API_SECRET"
+  ioc: true   # enable Immediate-Or-Cancel orders
+
+trading:
+  currency_pair: "BTC_USDT"
+  trade_limit: 6        # max loops; set to None for infinite trading
+  price_poll_interval: 0.2  # seconds
+  fallback_price_precision: 4  # decimal places; used if market precision is not provided
+  
+  # Parallel order parameters:
+  parallel_instances: 12     
+  dynamic_multiplier: 24      
+
+  buy:
+    fixed_usdt: 3       # USDT amount for each buy order instance (each instance uses the full amount)
+    trigger_price_adjust: 1    # Base adjustment for Buy Trigger/Stop Price (in tick units)
+    limit_price_adjust: 2      # Base adjustment for Buy Order/Limit Price (in tick units)
+  sell:
+    trigger_price_adjust: 1    # Base adjustment for Sell Trigger/Stop Price (in tick units)
+    limit_price_adjust: 2      # Base adjustment for Sell Order/Limit Price (in tick units)
+  # New customizable fee rate for sell orders (default 0.1%)
+  sell_trading_fee: 0.001
+
+logging:
+  enabled: true
+  file: "trading_bot.log"
+  level: "INFO"
+
+websocket:
+  max_instances_per_ws: 5  # New: Maximum order instances per WebSocket connection
