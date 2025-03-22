@@ -1,6 +1,7 @@
 import time
 import math
 import logging
+from math import ceil
 from gateio_api import GateIOAPIClient
 from ws_manager import WSManager
 from order_manager import OrderManager
@@ -21,34 +22,40 @@ class TradingStrategy:
         self.logger = logging.getLogger("TradingStrategy")
         
         # Initial price setup
+        self.logger.info("Fetching initial market price...")
         self.current_price = self._fetch_initial_price()
-        market = self.api.exchange.market(self.api.symbol)
-        price_precision = market['precision'].get('price', 
-            self.config['trading'].get('fallback_price_precision'))
-        self.tick_size = 10 ** (-price_precision)
         
-        # WS Manager setup
+        # Determine price precision using explicit if/else
+        market = self.api.exchange.market(self.api.symbol)
+        if 'price' in market['precision']:
+            price_precision = market['precision']['price']
+        else:
+            price_precision = self.config['trading'].get('fallback_price_precision')
+        self.tick_size = 10 ** (-price_precision)
+        self.logger.info(f"Determined tick size: {self.tick_size} (precision: {price_precision} digits)")
+        
+        # WS Manager setup using keyword arguments
         self.parallel_instances = self._determine_instances(self.current_price)
         self.ws_manager = WSManager(
-            self.config['trading']['currency_pair'],
-            self.update_price,
-            self.on_order_event,
-            self.config['api']['key'],
-            self.config['api']['secret'],
-            self.config['api'],
-            self.parallel_instances,
-            self.config['websocket'].get('max_instances_per_ws', 5)
+            currency_pair=self.config['trading']['currency_pair'],
+            on_price_callback=self.update_price,
+            on_order_callback=self.on_order_event,
+            api_key=self.config['api']['key'],
+            api_secret=self.config['api']['secret'],
+            config=self.config['api'],
+            total_instances=self.parallel_instances,
+            max_instances_per_ws=self.config['websocket'].get('max_instances_per_ws', 5)
         )
         
         # Order managers
         self.order_manager = OrderManager(self.api, self.state, self.config, self.ws_manager)
-        self.parallel_order_manager = ParallelOrderManager(
-            self.api, self.state, self.config, self.ws_manager)
+        self.parallel_order_manager = ParallelOrderManager(self.api, self.state, self.config, self.ws_manager)
 
     def _fetch_initial_price(self):
         try:
             ticker = self.api.exchange.fetch_ticker(self.api.symbol)
-            return float(ticker['last'])
+            price = float(ticker['last'])
+            return price
         except Exception as e:
             self.logger.critical(f"Initial price fetch failed: {str(e)}")
             raise SystemExit(1)
@@ -90,7 +97,7 @@ class TradingStrategy:
             base_limit = self.config['trading']['buy']['limit_price_adjust']
             trigger = last_price + ((base_trigger + instance_index) * tick_size)
             limit = last_price + ((base_limit + instance_index) * tick_size)
-        else:
+        else:  # Assuming the only other valid type is 'sell'
             base_trigger = self.config['trading']['sell']['trigger_price_adjust']
             base_limit = self.config['trading']['sell']['limit_price_adjust']
             trigger = last_price - ((base_trigger + instance_index) * tick_size)
@@ -99,11 +106,14 @@ class TradingStrategy:
         return round(trigger, decimal_places), round(limit, decimal_places)
 
     def _get_market_price(self):
+        self.logger.debug("Fetching current market price...")
         start_time = time.time()
         while self.current_price is None:
             if time.time() - start_time > 5:
+                self.logger.error("No price update received from WebSocket within 5 seconds.")
                 break
             time.sleep(0.01)
+        self.logger.debug(f"Current market price is: {self.current_price}")
         return self.current_price
 
     def _determine_instances(self, current_price):
