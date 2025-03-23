@@ -12,31 +12,32 @@ async def test_order_amendment():
     url = "wss://api.gateio.ws/ws/v4/"
     
     async with connect(url) as websocket:
-        # 1. Generate signature for authentication
+        # 1. Generate authentication signature
         timestamp = int(time.time())
-        body = json.dumps({"method": "server.login", "params": [API_KEY, "", timestamp]})
-        signature_payload = f"{timestamp}\n{body}".encode()
-        signature = hmac.new(API_SECRET.encode(), signature_payload, hashlib.sha512).hexdigest()
-
-        # 2. Authenticate
         login_payload = {
             "id": 1,
             "method": "server.login",
-            "params": [API_KEY, signature, timestamp]
+            "params": [API_KEY, "", timestamp]
         }
+        body = json.dumps(login_payload)
+        signature_payload = f"{timestamp}\n{body}".encode()
+        signature = hmac.new(API_SECRET.encode(), signature_payload, hashlib.sha512).hexdigest()
+
+        # 2. Authenticate with updated signature
+        login_payload["params"][1] = signature  # Inject signature
         await websocket.send(json.dumps(login_payload))
         login_response = await websocket.recv()
         print("Login response:", login_response)
 
-        # 3. Send order amendment with CORRECT METHOD NAME
+        # 3. Send amendment with CORRECT METHOD and VALID PARAMS
         amendment_payload = {
             "id": 12345,
-            "method": "spot.order.update",  # <-- FIXED METHOD NAME (was "order.update")
+            "method": "spot.order_update",  # <-- Correct method (underscore, not dot)
             "params": [
-                "invalid_order_123",  # Fake order ID
-                "BTC_USDT",           # Valid trading pair
+                9999999999,          # Use numeric invalid order ID (not string)
+                "BTC_USDT",          # Valid trading pair
                 {
-                    "amount": "0.001", 
+                    "amount": "0.001",
                     "price": "30000"
                 }
             ]
