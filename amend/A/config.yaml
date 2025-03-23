@@ -1,0 +1,35 @@
+api:
+  ws_base: "wss://ws.gate.io/v4"
+  base_url: "https://api.gateio.ws/api/v4"
+  key: "YOUR_GATEIO_API_KEY"
+  secret: "YOUR_GATEIO_API_SECRET"
+  ioc: true
+  # Retry configuration
+  max_ws_retries: 3               # Max WebSocket retry attempts
+  ws_retry_initial_interval: 0.1  # Initial retry interval (seconds)
+  ws_retry_multiplier: 2          # Exponential backoff multiplier
+
+trading:
+  currency_pair: "BTC_USDT"
+  trade_limit: 6
+  price_poll_interval: 0.2
+  fallback_price_precision: 4
+  parallel_instances: 12
+  dynamic_multiplier: 24
+
+buy:
+  fixed_usdt: 3
+  trigger_price_adjust: 1
+  limit_price_adjust: 2
+
+sell:
+  trigger_price_adjust: 1
+  limit_price_adjust: 2
+
+logging:
+  enabled: true
+  file: "trading_bot.log"
+  level: "INFO"
+
+websocket:
+  max_instances_per_ws: 5 
