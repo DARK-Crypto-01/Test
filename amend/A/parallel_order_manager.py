@@ -10,9 +10,9 @@ def round_up_to_one_significant(x):
     first_digit = int(abs(x) / factor)
     if abs(x) > first_digit * factor:
         first_digit += 1
-    if first_digit == 10:
-        first_digit = 1
-        exponent += 1
+        if first_digit == 10:
+            first_digit = 1
+            exponent += 1
     return first_digit * (10 ** exponent)
 
 class ParallelOrderManager:
@@ -22,98 +22,179 @@ class ParallelOrderManager:
         self.config = config
         self.ws_manager = ws_manager
         self.logger = logging.getLogger("ParallelOrderManager")
-        self.pending_timeout = self.config['trading'].get('pending_timeout', 30)
+        self.max_retries = config['api'].get('max_ws_retries', 3)
+        self.retry_interval = config['api'].get('ws_retry_initial_interval', 0.1)
+        self.retry_multiplier = config['api'].get('ws_retry_multiplier', 2)
+        
+    def _should_skip_instance(self, instance_index):
+        return instance_index in self.state.pending_actions
+
+    def _generate_order_parameters(self, instance_index, get_market_price_func, 
+                                  calculate_prices_func, order_type):
+        """Generate fresh order parameters with current market data"""
+        current_price = get_market_price_func()
+        trigger, limit = calculate_prices_func(current_price, order_type, instance_index)
+        
+        amount = None
+        if order_type == 'sell':
+            if self.state.last_buy_amount:
+                fee_rate = self.config['trading'].get('sell_trading_fee', 0.001)
+                raw_fee = self.state.last_buy_amount * fee_rate
+                amount = self.state.last_buy_amount - round_up_to_one_significant(raw_fee)
+        else:
+            amount = self.api.calculate_order_amount(order_type, limit)
+            
+        return {
+            'price': current_price,
+            'trigger': trigger,
+            'limit': limit,
+            'amount': amount
+        }
+
+    def _ws_operation_with_retry(self, operation, instance_index, get_market_price_func,
+                                calculate_prices_func, order_type, is_amendment=False,
+                                previous_params=None):
+        """WebSocket operation with dynamic parameters and retries"""
+        for attempt in range(self.max_retries + 1):
+            try:
+                params = self._generate_order_parameters(
+                    instance_index, get_market_price_func,
+                    calculate_prices_func, order_type
+                )
+                
+                if is_amendment and previous_params:
+                    params.update(previous_params)
+
+                result = operation(**params)
+                
+                if order_type == 'buy' and params['amount'] <= 0:
+                    raise ValueError("Invalid buy amount after recalculation")
+                    
+                return result, params
+                
+            except Exception as e:
+                if attempt == self.max_retries:
+                    raise
+                sleep_time = self.retry_interval * (self.retry_multiplier ** attempt)
+                self.logger.debug(f"Retry {attempt+1}/{self.max_retries} in {sleep_time:.2f}s")
+                time.sleep(sleep_time)
+                
+        return None, None
+
+    def _rest_fallback_operation(self, operation_name, instance_index, 
+                                get_market_price_func, calculate_prices_func,
+                                order_type, previous_order_id=None):
+        """REST API fallback with fresh parameters"""
+        try:
+            params = self._generate_order_parameters(
+                instance_index, get_market_price_func,
+                calculate_prices_func, order_type
+            )
+            
+            if operation_name == 'place':
+                return self.api.place_stop_limit_order(
+                    order_type, params['trigger'], params['limit'],
+                    custom_amount=params['amount'] if order_type == 'sell' else None
+                )
+                
+            elif operation_name == 'amend' and previous_order_id:
+                return self.api.amend_stop_limit_order(
+                    previous_order_id, order_type,
+                    params['trigger'], params['limit'],
+                    custom_amount=params['amount']
+                )
+                
+        except Exception as e:
+            self.logger.error(f"REST {operation_name} failed: {str(e)}")
+            return None
 
     def place_new_orders(self, calculate_prices_func, get_market_price_func, total_instances):
         for instance_index in range(total_instances):
             if self._should_skip_instance(instance_index):
                 continue
 
-            last_price = get_market_price_func()
+            self.state.pending_actions[instance_index] = True
             order_type = self.state.order_type or 'buy'
-            trigger, limit = calculate_prices_func(last_price, order_type, instance_index)
             
-            # Calculate amount
-            amount = None
-            if order_type == 'sell':
-                if self.state.last_buy_amount:
-                    fee_rate = self.config['trading'].get('sell_trading_fee', 0.001)
-                    raw_fee = self.state.last_buy_amount * fee_rate
-                    amount = self.state.last_buy_amount - round_up_to_one_significant(raw_fee)
-                else:
-                    continue
-            else:
-                amount = self.api.calculate_order_amount(order_type, limit)
-            
-            # Place order
-            ws_client = self.ws_manager.get_ws_client(instance_index)
-            order = ws_client.place_stop_limit_order_ws(order_type, trigger, limit, amount)
-            
-            if order:
-                self.state.pending_actions[instance_index] = time.time()
-                self.state.active_orders[instance_index] = {
-                    'order_id': order.get('id'),
-                    'client_order_id': order.get('client_order_id'),
-                    'last_price': last_price,
-                    'limit_price': limit,
-                    'order_type': order_type,
-                    'timestamp': time.time()
-                }
+            try:
+                ws_client = self.ws_manager.get_ws_client(instance_index)
+                order, params = self._ws_operation_with_retry(
+                    operation=lambda p: ws_client.place_stop_limit_order_ws(
+                        order_type, p['trigger'], p['limit'], p['amount']
+                    ),
+                    instance_index=instance_index,
+                    get_market_price_func=get_market_price_func,
+                    calculate_prices_func=calculate_prices_func,
+                    order_type=order_type
+                )
 
-    def _should_skip_instance(self, instance_index):
-        if instance_index in self.state.active_orders:
-            return True
-        pending_time = self.state.pending_actions.get(instance_index)
-        if pending_time:
-            if time.time() - pending_time < self.pending_timeout:
-                return True
-            else:
-                del self.state.pending_actions[instance_index]
-        return False
+                if not order:
+                    order = self._rest_fallback_operation(
+                        'place', instance_index, 
+                        get_market_price_func,
+                        calculate_prices_func,
+                        order_type
+                    )
+
+                if order:
+                    self.state.active_orders[instance_index] = {
+                        'order_id': order.get('id'),
+                        'client_order_id': order.get('client_order_id'),
+                        'last_price': params['price'],
+                        'limit_price': params['limit'],
+                        'order_type': order_type,
+                        'timestamp': time.time()
+                    }
+                    del self.state.pending_actions[instance_index]
+                else:
+                    self.logger.error(f"Permanent failure: {instance_index}")
+
+            except Exception as e:
+                self.logger.error(f"Final failure: {instance_index} - {str(e)}")
 
     def amend_order(self, instance_index, get_market_price_func, calculate_prices_func):
-        if instance_index in self.state.pending_actions:
-            return
-
-        order_state = self.state.active_orders.get(instance_index)
-        if not order_state:
-            return
-
+        self.state.pending_actions[instance_index] = True
+        
         try:
-            self.state.pending_actions[instance_index] = time.time()
-            new_price = get_market_price_func()
-            trigger, limit = calculate_prices_func(new_price, 
-                                                 order_state['order_type'], 
-                                                 instance_index)
-            
-            # Prepare amendment
-            new_amount = None
-            if order_state['order_type'] == 'buy':
-                new_amount = self.api.calculate_order_amount('buy', limit)
-            
+            order_state = self.state.active_orders.get(instance_index)
+            if not order_state:
+                return
+
             ws_client = self.ws_manager.get_ws_client(instance_index)
-            ws_client.amend_order_ws(
-                order_state['client_order_id'],
-                trigger,
-                limit,
-                new_amount=new_amount
+            amendment, params = self._ws_operation_with_retry(
+                operation=lambda p: ws_client.amend_order_ws(
+                    order_state['client_order_id'],
+                    p['trigger'], p['limit'], p['amount']
+                ),
+                instance_index=instance_index,
+                get_market_price_func=get_market_price_func,
+                calculate_prices_func=calculate_prices_func,
+                order_type=order_state['order_type'],
+                is_amendment=True,
+                previous_params={
+                    'client_order_id': order_state['client_order_id']
+                }
             )
-            order_state['last_price'] = new_price
+
+            if not amendment:
+                amendment = self._rest_fallback_operation(
+                    'amend', instance_index,
+                    get_market_price_func,
+                    calculate_prices_func,
+                    order_state['order_type'],
+                    previous_order_id=order_state['order_id']
+                )
+
+            if amendment:
+                order_state['last_price'] = params['price']
+                del self.state.pending_actions[instance_index]
+
         except Exception as e:
-            self.logger.error(f"Amendment failed: {str(e)}")
-            del self.state.pending_actions[instance_index]
+            self.logger.error(f"Permanent failure: {instance_index} - {str(e)}")
 
     def monitor_active_orders(self, get_market_price_func, calculate_prices_func):
         current_price = get_market_price_func()
-        now = time.time()
         
-        # Cleanup expired pending flags
-        for idx, ts in list(self.state.pending_actions.items()):
-            if now - ts > self.pending_timeout:
-                del self.state.pending_actions[idx]
-                self.logger.warning(f"Cleared expired pending flag for instance {idx}")
-
-        # Check active orders
         for instance_index, order_state in list(self.state.active_orders.items()):
             if instance_index in self.state.pending_actions:
                 continue
@@ -151,6 +232,7 @@ class ParallelOrderManager:
                 self.logger.error(f"Recovery error: {str(e)}")
             finally:
                 del self.state.active_orders[instance_index]
+                self.state.pending_actions.pop(instance_index, None)
 
     def graceful_shutdown(self):
         self.logger.info("Starting graceful shutdown...")
