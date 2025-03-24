@@ -25,16 +25,13 @@ class TradingStrategy:
         self.logger.info("Fetching initial market price...")
         self.current_price = self._fetch_initial_price()
         
-        # Determine price precision using explicit if/else
+        # Determine price precision
         market = self.api.exchange.market(self.api.symbol)
-        if 'price' in market['precision']:
-            price_precision = market['precision']['price']
-        else:
-            price_precision = self.config['trading'].get('fallback_price_precision')
+        price_precision = market['precision'].get('price', self.config['trading'].get('fallback_price_precision'))
         self.tick_size = 10 ** (-price_precision)
         self.logger.info(f"Determined tick size: {self.tick_size} (precision: {price_precision} digits)")
         
-        # WS Manager setup using keyword arguments
+        # WS Manager setup
         self.parallel_instances = self._determine_instances(self.current_price)
         self.ws_manager = WSManager(
             currency_pair=self.config['trading']['currency_pair'],
@@ -54,8 +51,7 @@ class TradingStrategy:
     def _fetch_initial_price(self):
         try:
             ticker = self.api.exchange.fetch_ticker(self.api.symbol)
-            price = float(ticker['last'])
-            return price
+            return float(ticker['last'])
         except Exception as e:
             self.logger.critical(f"Initial price fetch failed: {str(e)}")
             raise SystemExit(1)
@@ -66,25 +62,38 @@ class TradingStrategy:
     def on_order_event(self, order_id, event):
         status = event.get('status')
         client_order_id = event.get('client_order_id')
+        side = event.get('side')
+        filled = float(event.get('filled', 0))
         
-        # Find and clear pending flag
+        # Find instance index using client_order_id
         instance_index = next(
             (idx for idx, state in self.state.active_orders.items()
              if state.get('client_order_id') == client_order_id),
             None
         )
+        
+        # Clear pending actions flag
         if instance_index is not None and instance_index in self.state.pending_actions:
             del self.state.pending_actions[instance_index]
-        
-        # Update order status
+
+        # Handle sell execution (full or partial)
+        if side == 'sell' and filled > 0:
+            if instance_index is not None and instance_index in self.state.active_orders:
+                del self.state.active_orders[instance_index]
+                self.logger.info(f"Sell order {client_order_id} removed from tracking (filled: {filled})")
+                self.state.order_type = 'buy'
+            return  # Skip normal status handling
+
+        # Normal handling for non-sell orders
         if status in ["closed", "filled", "canceled"]:
-            if order_id in self.state.active_orders:
-                del self.state.active_orders[order_id]
+            if instance_index is not None and instance_index in self.state.active_orders:
+                del self.state.active_orders[instance_index]
         elif status == "open":
-            self.state.active_orders[order_id] = {
+            self.state.active_orders[instance_index] = {
                 'order_id': order_id,
+                'client_order_id': client_order_id,
                 'symbol': event.get('symbol'),
-                'side': event.get('side'),
+                'side': side,
                 'price': float(event.get('price')),
                 'amount': float(event.get('amount')),
                 'status': status
@@ -97,7 +106,7 @@ class TradingStrategy:
             base_limit = self.config['trading']['buy']['limit_price_adjust']
             trigger = last_price + ((base_trigger + instance_index) * tick_size)
             limit = last_price + ((base_limit + instance_index) * tick_size)
-        else:  # Assuming the only other valid type is 'sell'
+        else:
             base_trigger = self.config['trading']['sell']['trigger_price_adjust']
             base_limit = self.config['trading']['sell']['limit_price_adjust']
             trigger = last_price - ((base_trigger + instance_index) * tick_size)
@@ -106,14 +115,12 @@ class TradingStrategy:
         return round(trigger, decimal_places), round(limit, decimal_places)
 
     def _get_market_price(self):
-        self.logger.debug("Fetching current market price...")
         start_time = time.time()
         while self.current_price is None:
             if time.time() - start_time > 5:
-                self.logger.error("No price update received from WebSocket within 5 seconds.")
+                self.logger.error("No price update received within 5 seconds.")
                 break
             time.sleep(0.01)
-        self.logger.debug(f"Current market price is: {self.current_price}")
         return self.current_price
 
     def _determine_instances(self, current_price):
