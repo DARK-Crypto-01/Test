@@ -3,7 +3,6 @@ api:
   base_url: "https://api.gateio.ws/api/v4"
   key: "YOUR_GATEIO_API_KEY"
   secret: "YOUR_GATEIO_API_SECRET"
-  ioc: true
   # Retry configuration
   max_ws_retries: 3               # Max WebSocket retry attempts
   ws_retry_initial_interval: 0.1  # Initial retry interval (seconds)
