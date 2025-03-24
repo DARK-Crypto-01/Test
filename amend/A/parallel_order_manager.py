@@ -31,7 +31,6 @@ class ParallelOrderManager:
 
     def _generate_order_parameters(self, instance_index, get_market_price_func, 
                                   calculate_prices_func, order_type):
-        """Generate fresh order parameters with current market data"""
         current_price = get_market_price_func()
         trigger, limit = calculate_prices_func(current_price, order_type, instance_index)
         
@@ -54,7 +53,6 @@ class ParallelOrderManager:
     def _ws_operation_with_retry(self, operation, instance_index, get_market_price_func,
                                 calculate_prices_func, order_type, is_amendment=False,
                                 previous_params=None):
-        """WebSocket operation with dynamic parameters and retries"""
         for attempt in range(self.max_retries + 1):
             try:
                 params = self._generate_order_parameters(
@@ -84,7 +82,6 @@ class ParallelOrderManager:
     def _rest_fallback_operation(self, operation_name, instance_index, 
                                 get_market_price_func, calculate_prices_func,
                                 order_type, previous_order_id=None):
-        """REST API fallback with fresh parameters"""
         try:
             params = self._generate_order_parameters(
                 instance_index, get_market_price_func,
@@ -137,14 +134,18 @@ class ParallelOrderManager:
                     )
 
                 if order:
+                    client_order_id = order.get('client_order_id')
+                    # Update both mappings
                     self.state.active_orders[instance_index] = {
                         'order_id': order.get('id'),
-                        'client_order_id': order.get('client_order_id'),
+                        'client_order_id': client_order_id,
                         'last_price': params['price'],
                         'limit_price': params['limit'],
                         'order_type': order_type,
                         'timestamp': time.time()
                     }
+                    if client_order_id:
+                        self.state.order_mapping[client_order_id] = instance_index
                     del self.state.pending_actions[instance_index]
                 else:
                     self.logger.error(f"Permanent failure: {instance_index}")
@@ -186,7 +187,10 @@ class ParallelOrderManager:
                 )
 
             if amendment:
+                # Update active orders but preserve client_order_id
                 order_state['last_price'] = params['price']
+                order_state['limit_price'] = params['limit']
+                order_state['timestamp'] = time.time()
                 del self.state.pending_actions[instance_index]
 
         except Exception as e:
@@ -207,12 +211,24 @@ class ParallelOrderManager:
                 self.amend_order(instance_index, get_market_price_func, calculate_prices_func)
 
     def handle_order_execution(self, order_id, event):
-        for idx, state in list(self.state.active_orders.items()):
-            if state['order_id'] == order_id:
+        client_order_id = event.get('client_order_id')
+        instance_index = self.state.order_mapping.get(client_order_id)
+        
+        if not instance_index:
+            # Fallback search
+            for idx, state in self.state.active_orders.items():
+                if state.get('client_order_id') == client_order_id:
+                    instance_index = idx
+                    break
+        
+        if instance_index is not None:
+            if state := self.state.active_orders.get(instance_index):
                 if state['order_type'] == 'buy':
                     self.state.last_buy_amount = float(event.get('filled', 0))
-                del self.state.active_orders[idx]
-                break
+                # Clean both mappings
+                del self.state.active_orders[instance_index]
+                if client_order_id in self.state.order_mapping:
+                    del self.state.order_mapping[client_order_id]
 
     def recover_state(self, instance_index=None):
         self.logger.info("Initiating state recovery...")
@@ -226,12 +242,18 @@ class ParallelOrderManager:
         order_state = self.state.active_orders.get(instance_index)
         if order_state:
             try:
+                client_order_id = order_state.get('client_order_id')
                 ws_client = self.ws_manager.get_ws_client(instance_index)
                 ws_client.cancel_order_ws(order_state['order_id'])
+                
+                # Clean both mappings
+                if client_order_id in self.state.order_mapping:
+                    del self.state.order_mapping[client_order_id]
+                del self.state.active_orders[instance_index]
+                
             except Exception as e:
                 self.logger.error(f"Recovery error: {str(e)}")
             finally:
-                del self.state.active_orders[instance_index]
                 self.state.pending_actions.pop(instance_index, None)
 
     def graceful_shutdown(self):
@@ -250,6 +272,7 @@ class ParallelOrderManager:
         
         for idx, state in sell_orders:
             try:
+                client_order_id = state.get('client_order_id')
                 ws_client = self.ws_manager.get_ws_client(idx)
                 if ws_client.cancel_order_ws(state['order_id']):
                     amount = state.get('executed_amount')
@@ -259,4 +282,7 @@ class ParallelOrderManager:
                 self.logger.error(f"Shutdown error: {str(e)}")
             finally:
                 if idx in self.state.active_orders:
+                    # Clean both mappings
+                    if client_order_id in self.state.order_mapping:
+                        del self.state.order_mapping[client_order_id]
                     del self.state.active_orders[idx]
