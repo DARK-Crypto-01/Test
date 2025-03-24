@@ -9,7 +9,8 @@ from parallel_order_manager import ParallelOrderManager
 
 class OrderState:
     def __init__(self):
-        self.active_orders = {}
+        self.active_orders = {}    # {instance_index: order_data}
+        self.order_mapping = {}    # {client_order_id: instance_index}
         self.order_type = 'buy'
         self.last_buy_amount = None
         self.pending_actions = {}  # {instance_index: timestamp}
@@ -65,13 +66,20 @@ class TradingStrategy:
         side = event.get('side')
         filled = float(event.get('filled', 0))
         
-        # Find instance index using client_order_id
-        instance_index = next(
-            (idx for idx, state in self.state.active_orders.items()
-             if state.get('client_order_id') == client_order_id),
-            None
-        )
+        # 1. Try direct lookup using order_mapping
+        instance_index = self.state.order_mapping.get(client_order_id)
         
+        # 2. Fallback search if not found
+        if instance_index is None:
+            instance_index = next(
+                (idx for idx, state in self.state.active_orders.items()
+                 if state.get('client_order_id') == client_order_id),
+                None
+            )
+            # Update mapping if found through search
+            if instance_index is not None:
+                self.state.order_mapping[client_order_id] = instance_index
+
         # Clear pending actions flag
         if instance_index is not None and instance_index in self.state.pending_actions:
             del self.state.pending_actions[instance_index]
@@ -79,6 +87,9 @@ class TradingStrategy:
         # Handle sell execution (full or partial)
         if side == 'sell' and filled > 0:
             if instance_index is not None and instance_index in self.state.active_orders:
+                # Remove both mappings
+                if client_order_id in self.state.order_mapping:
+                    del self.state.order_mapping[client_order_id]
                 del self.state.active_orders[instance_index]
                 self.logger.info(f"Sell order {client_order_id} removed from tracking (filled: {filled})")
                 self.state.order_type = 'buy'
@@ -86,9 +97,13 @@ class TradingStrategy:
 
         # Normal handling for non-sell orders
         if status in ["closed", "filled", "canceled"]:
-            if instance_index is not None and instance_index in self.state.active_orders:
-                del self.state.active_orders[instance_index]
-        elif status == "open":
+            if instance_index is not None:
+                # Remove both mappings
+                if client_order_id in self.state.order_mapping:
+                    del self.state.order_mapping[client_order_id]
+                if instance_index in self.state.active_orders:
+                    del self.state.active_orders[instance_index]
+        elif status == "open" and instance_index is not None:
             self.state.active_orders[instance_index] = {
                 'order_id': order_id,
                 'client_order_id': client_order_id,
@@ -98,6 +113,8 @@ class TradingStrategy:
                 'amount': float(event.get('amount')),
                 'status': status
             }
+            # Ensure mapping exists
+            self.state.order_mapping[client_order_id] = instance_index
 
     def _calculate_prices(self, last_price, order_type, instance_index=0):
         tick_size = self.tick_size
