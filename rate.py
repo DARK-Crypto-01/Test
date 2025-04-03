@@ -3,13 +3,24 @@ import websockets
 import json
 import time
 
+async def count_messages(websocket, counter):
+    try:
+        while True:
+            # Wait for each incoming message and count it
+            message = await websocket.recv()
+            counter[0] += 1
+    except asyncio.CancelledError:
+        # When the task is cancelled, exit gracefully
+        pass
+    except Exception as e:
+        print("Error receiving message:", e)
+
 async def measure_ticker_updates():
     url = "wss://api.gateio.ws/ws/v4/"
-    event_count = 0
-    start_time = time.time()
+    counter = [0]  # Use a mutable type to allow modifications inside the task
 
     async with websockets.connect(url) as websocket:
-        # Prepare the subscription message for the BTC/USDT ticker channel.
+        # Subscribe to the BTC_USDT ticker updates
         subscribe_message = {
             "time": int(time.time()),
             "channel": "spot.ticker",
@@ -19,27 +30,21 @@ async def measure_ticker_updates():
         await websocket.send(json.dumps(subscribe_message))
         print("Subscribed to BTC_USDT ticker updates on Gate.io")
 
-        # Loop until one minute has elapsed.
-        while True:
-            current_time = time.time()
-            elapsed = current_time - start_time
-            if elapsed >= 60:
-                break
+        # Start the counting task
+        counting_task = asyncio.create_task(count_messages(websocket, counter))
+        
+        # Let the counting task run for one minute
+        await asyncio.sleep(60)
+        
+        # Cancel the counting task after one minute
+        counting_task.cancel()
+        try:
+            await counting_task
+        except asyncio.CancelledError:
+            pass
 
-            try:
-                # Use asyncio.wait_for to adjust the timeout based on remaining time.
-                timeout = 60 - elapsed
-                message = await asyncio.wait_for(websocket.recv(), timeout=timeout)
-                data = json.loads(message)
-                event_count += 1
-            except asyncio.TimeoutError:
-                # No more messages in the remaining time.
-                break
-            except Exception as e:
-                print("Error:", e)
-                break
-
-    print(f"Total price update events received in one minute: {event_count}")
+        print(f"Total price update events received in one minute: {counter[0]}")
 
 if __name__ == "__main__":
-    asyncio.get_event_loop().run_until_complete(measure_ticker_updates())
+    # Use asyncio.run() to properly manage the event loop
+    asyncio.run(measure_ticker_updates())
