@@ -3,32 +3,47 @@ import websockets
 import json
 import time
 
-async def subscribe_ticker():
-    # Gate.io WebSocket endpoint for version 4 of the API
+async def count_messages(websocket, counter):
+    try:
+        while True:
+            message = await websocket.recv()
+            data = json.loads(message)
+            counter[0] += 1
+            print("Received message:", data)
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        print("Error receiving message:", e)
+
+async def measure_ticker_updates():
     url = "wss://api.gateio.ws/ws/v4/"
-    
+    counter = [0]  # mutable counter to track events
+
     async with websockets.connect(url) as websocket:
-        # Create the subscription message. The "payload" is a list of trading pairs.
+        # Use the "ticker" channel per the API v4 documentation
         subscribe_message = {
             "time": int(time.time()),
-            "channel": "spot.ticker",
+            "channel": "ticker",
             "event": "subscribe",
             "payload": ["BTC_USDT"]
         }
-        # Send the subscription request to the websocket
         await websocket.send(json.dumps(subscribe_message))
         print("Subscribed to BTC_USDT ticker updates on Gate.io")
 
-        # Listen for incoming messages (price updates)
-        while True:
-            try:
-                message = await websocket.recv()
-                data = json.loads(message)
-                print("Received update:", data)
-            except Exception as e:
-                print("Error:", e)
-                break
+        # Start a concurrent task to count messages
+        counting_task = asyncio.create_task(count_messages(websocket, counter))
+        
+        # Wait for one minute while messages are received
+        await asyncio.sleep(60)
+        
+        # Cancel the counting task after one minute and wait for cancellation to finish
+        counting_task.cancel()
+        try:
+            await counting_task
+        except asyncio.CancelledError:
+            pass
 
-# Start the asyncio event loop and run the subscription coroutine
+        print(f"Total ticker update events received in one minute: {counter[0]}")
+
 if __name__ == "__main__":
-    asyncio.get_event_loop().run_until_complete(subscribe_ticker())
+    asyncio.run(measure_ticker_updates())
