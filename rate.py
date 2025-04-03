@@ -17,32 +17,32 @@ async def count_messages(websocket, counter):
 
 async def measure_ticker_updates():
     url = "wss://api.gateio.ws/ws/v4/"
-    counter = [0]  # mutable counter to track events
+    counter = [0]  # Mutable counter to track events
 
     async with websockets.connect(url) as websocket:
-        # Use the "ticker" channel per the API v4 documentation
+        # Subscribe to ticker updates for BTC_USDT using the correct channel "spot.tickers"
         subscribe_message = {
             "time": int(time.time()),
-            "channel": "ticker",
+            "channel": "spot.tickers",
             "event": "subscribe",
             "payload": ["BTC_USDT"]
         }
         await websocket.send(json.dumps(subscribe_message))
         print("Subscribed to BTC_USDT ticker updates on Gate.io")
-
-        # Start a concurrent task to count messages
+        
+        # Start a concurrent task to count incoming messages
         counting_task = asyncio.create_task(count_messages(websocket, counter))
         
-        # Wait for one minute while messages are received
+        # Run for one minute
         await asyncio.sleep(60)
         
-        # Cancel the counting task after one minute and wait for cancellation to finish
+        # Cancel the counting task after one minute
         counting_task.cancel()
         try:
             await counting_task
         except asyncio.CancelledError:
             pass
-
+        
         print(f"Total ticker update events received in one minute: {counter[0]}")
 
 if __name__ == "__main__":
