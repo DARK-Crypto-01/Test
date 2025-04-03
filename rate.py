@@ -3,59 +3,43 @@ import websockets
 import json
 import time
 
-# Global counter to keep track of the number of events
-event_count = 0
-
-# Function to handle counting events
-async def subscribe_ticker():
-    global event_count
+async def measure_ticker_updates():
     url = "wss://api.gateio.ws/ws/v4/"
-    
+    event_count = 0
+    start_time = time.time()
+
     async with websockets.connect(url) as websocket:
-        # Create the subscription message for BTC_USDT ticker updates
+        # Prepare the subscription message for the BTC/USDT ticker channel.
         subscribe_message = {
             "time": int(time.time()),
             "channel": "spot.ticker",
             "event": "subscribe",
             "payload": ["BTC_USDT"]
         }
-        
-        # Send the subscription message to the websocket
         await websocket.send(json.dumps(subscribe_message))
         print("Subscribed to BTC_USDT ticker updates on Gate.io")
 
-        # Start the loop to listen for messages
+        # Loop until one minute has elapsed.
         while True:
+            current_time = time.time()
+            elapsed = current_time - start_time
+            if elapsed >= 60:
+                break
+
             try:
-                # Wait for a new message from the websocket
-                message = await websocket.recv()
+                # Use asyncio.wait_for to adjust the timeout based on remaining time.
+                timeout = 60 - elapsed
+                message = await asyncio.wait_for(websocket.recv(), timeout=timeout)
                 data = json.loads(message)
-                
-                # Increment the counter each time a price update message is received
                 event_count += 1
-                
-                # Print the received data (optional)
-                # print("Received update:", data)
+            except asyncio.TimeoutError:
+                # No more messages in the remaining time.
+                break
             except Exception as e:
                 print("Error:", e)
                 break
 
-# Function to measure the event count over a 1-minute period
-async def measure_event_count():
-    global event_count
-    # Run the subscribe_ticker function in the background
-    asyncio.create_task(subscribe_ticker())
-    
-    while True:
-        # Wait for 60 seconds
-        await asyncio.sleep(60)
-        
-        # Print the number of events received in the last minute
-        print(f"Number of events received in the last 1 minute: {event_count}")
-        
-        # Reset the event count for the next minute
-        event_count = 0
+    print(f"Total price update events received in one minute: {event_count}")
 
-# Start the asyncio event loop and run the measure_event_count coroutine
 if __name__ == "__main__":
-    asyncio.get_event_loop().run_until_complete(measure_event_count())
+    asyncio.get_event_loop().run_until_complete(measure_ticker_updates())
