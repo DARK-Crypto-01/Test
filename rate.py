@@ -21,16 +21,25 @@ async def track_btc_updates():
         print("Connected. Monitoring BTC/USDT for 60 seconds...")
 
         try:
-            # Run for 60 seconds
             while time.time() - start_time < 60:
                 message = await asyncio.wait_for(websocket.recv(), timeout=1)
                 data = json.loads(message)
                 
+                # Handle subscription confirmation first
+                if data.get('event') == 'subscribe':
+                    print(f"Subscribed to channel: {data.get('channel')}")
+                    continue
+                
+                # Handle actual price updates
                 if data.get('channel') == 'spot.tickers' and 'result' in data:
                     event_count += 1
+                    result = data['result']
                     timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-                    price = data['result']['last']
-                    change = data['result']['change_percentage']
+                    
+                    # Safely get price values with fallbacks
+                    price = result.get('last', 'N/A')
+                    change = result.get('change_percentage', 'N/A')
+                    
                     print(f"[{timestamp}] Price: ${price} | 24h Δ: {change}%")
 
         except asyncio.TimeoutError:
