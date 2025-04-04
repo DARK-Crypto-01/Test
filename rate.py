@@ -11,25 +11,28 @@ class PriceUpdateCounter:
     async def handle_messages(self, websocket):
         try:
             async for message in websocket:
-                data = json.loads(message)
-                if 'result' in data and data['result']['channel'] == 'spot.tickers':
-                    self.event_count += 1
-        except websockets.ConnectionClosed:
-            print("Connection closed by server. Reconnecting...")
-            await self.reconnect()
+                try:
+                    data = json.loads(message)
+                    # Check if it's a ticker update message
+                    if data.get('channel') == 'spot.tickers' and 'result' in data:
+                        self.event_count += 1
+                        # Optional: Uncomment to see individual updates
+                        # print(f"Update received: {data['result']['last']}")
+                        
+                except json.JSONDecodeError:
+                    print("Received non-JSON message:", message)
+                except KeyError as e:
+                    print(f"Unexpected message format: {e}")
+
+        except websockets.ConnectionClosed as e:
+            print(f"Connection closed: {e.code} - {e.reason}")
 
     async def print_stats(self):
         while True:
             await asyncio.sleep(60)
-            duration = time.time() - self.start_time
-            print(f"\nEvents received in last minute: {self.event_count}")
-            print(f"Average events per second: {self.event_count/60:.2f}")
+            print(f"\n[Stats] Events/min: {self.event_count} | Avg/s: {self.event_count/60:.2f}")
             self.event_count = 0
             self.start_time = time.time()
-
-    async def reconnect(self):
-        await asyncio.sleep(5)  # Wait before reconnecting
-        await monitor_btc_updates()
 
 async def monitor_btc_updates():
     counter = PriceUpdateCounter()
@@ -42,20 +45,22 @@ async def monitor_btc_updates():
         "payload": ["BTC_USDT"]
     })
 
-    try:
-        async with websockets.connect(uri, ping_interval=30) as websocket:
-            await websocket.send(subscribe_message)
-            print("Connected to Gate.io WebSocket. Monitoring BTC/USDT updates...")
-            
-            # Create separate tasks
-            handler = asyncio.create_task(counter.handle_messages(websocket))
-            stats = asyncio.create_task(counter.print_stats())
-            
-            await asyncio.gather(handler, stats)
-            
-    except Exception as e:
-        print(f"Connection error: {e}")
-        await counter.reconnect()
+    while True:
+        try:
+            async with websockets.connect(uri, ping_interval=20) as websocket:
+                await websocket.send(subscribe_message)
+                print("Connected successfully. Monitoring BTC/USDT updates...")
+                
+                # Run both tasks concurrently
+                await asyncio.gather(
+                    counter.handle_messages(websocket),
+                    counter.print_stats()
+                )
+                
+        except Exception as e:
+            print(f"Connection error: {e}")
+            print("Reconnecting in 5 seconds...")
+            await asyncio.sleep(5)
 
 if __name__ == "__main__":
     try:
