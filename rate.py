@@ -2,7 +2,6 @@ import asyncio
 import json
 import time
 import websockets
-from datetime import datetime
 
 async def track_btc_updates():
     uri = "wss://api.gateio.ws/ws/v4/"
@@ -18,37 +17,32 @@ async def track_btc_updates():
 
     async with websockets.connect(uri) as websocket:
         await websocket.send(subscribe_message)
-        print("Connected. Monitoring BTC/USDT for 60 seconds...")
+        print("Monitoring BTC/USDT price updates for 60 seconds...")
 
-        try:
-            while time.time() - start_time < 60:
+        # Create exit timer
+        exit_task = asyncio.create_task(asyncio.sleep(60))
+        
+        while True:
+            try:
+                # Check if time expired
+                if exit_task.done():
+                    break
+                
                 message = await asyncio.wait_for(websocket.recv(), timeout=1)
                 data = json.loads(message)
-                
-                # Handle subscription confirmation first
-                if data.get('event') == 'subscribe':
-                    print(f"Subscribed to channel: {data.get('channel')}")
-                    continue
-                
-                # Handle actual price updates
+
+                # Process only ticker updates
                 if data.get('channel') == 'spot.tickers' and 'result' in data:
                     event_count += 1
-                    result = data['result']
-                    timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-                    
-                    # Safely get price values with fallbacks
-                    price = result.get('last', 'N/A')
-                    change = result.get('change_percentage', 'N/A')
-                    
-                    print(f"[{timestamp}] Price: ${price} | 24h Δ: {change}%")
+                    price = data['result'].get('last', 'Price unavailable')
+                    print(f"Update {event_count}: ${price}")
 
-        except asyncio.TimeoutError:
-            pass  # Expected when stopping
+            except (asyncio.TimeoutError, KeyError):
+                continue
 
-        finally:
-            duration = time.time() - start_time
-            print(f"\nTotal updates received in {duration:.1f} seconds: {event_count}")
-            print(f"Average updates per second: {event_count/duration:.2f}")
+    duration = time.time() - start_time
+    print(f"\nTotal updates received in {duration:.1f} seconds: {event_count}")
+    print(f"Average updates per second: {event_count/duration:.2f}")
 
 if __name__ == "__main__":
     try:
