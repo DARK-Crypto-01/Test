@@ -1,49 +1,51 @@
 import asyncio
-import websockets
 import json
 import time
+import websockets
 
-async def count_messages(websocket, counter):
-    try:
-        while True:
-            message = await websocket.recv()
+class PriceUpdateCounter:
+    def __init__(self):
+        self.event_count = 0
+        self.start_time = time.time()
+
+    async def handle_messages(self, websocket):
+        async for message in websocket:
             data = json.loads(message)
-            counter[0] += 1
-            print("Received message:", data)
-    except asyncio.CancelledError:
-        pass
-    except Exception as e:
-        print("Error receiving message:", e)
+            if 'result' in data and data['result']['channel'] == 'spot.tickers':
+                self.event_count += 1
 
-async def measure_ticker_updates():
-    url = "wss://api.gateio.ws/ws/v4/"
-    counter = [0]  # Mutable counter to track events
+    async def print_stats(self):
+        while True:
+            await asyncio.sleep(60)
+            duration = time.time() - self.start_time
+            print(f"\nEvents received in last minute: {self.event_count}")
+            print(f"Average events per second: {self.event_count/60:.2f}")
+            self.event_count = 0
+            self.start_time = time.time()
 
-    async with websockets.connect(url) as websocket:
-        # Subscribe to ticker updates for BTC_USDT using the correct channel "spot.tickers"
-        subscribe_message = {
-            "time": int(time.time()),
-            "channel": "spot.tickers",
-            "event": "subscribe",
-            "payload": ["BTC_USDT"]
-        }
-        await websocket.send(json.dumps(subscribe_message))
-        print("Subscribed to BTC_USDT ticker updates on Gate.io")
+async def monitor_btc_updates():
+    counter = PriceUpdateCounter()
+    uri = "wss://api.gateio.ws/ws/v4/"
+    
+    subscribe_message = json.dumps({
+        "time": int(time.time()),
+        "channel": "spot.tickers",
+        "event": "subscribe",
+        "payload": ["BTC_USDT"]
+    })
+
+    async with websockets.connect(uri) as websocket:
+        await websocket.send(subscribe_message)
+        print("Connected to Gate.io WebSocket. Monitoring BTC/USDT updates...")
         
-        # Start a concurrent task to count incoming messages
-        counting_task = asyncio.create_task(count_messages(websocket, counter))
-        
-        # Run for one minute
-        await asyncio.sleep(60)
-        
-        # Cancel the counting task after one minute
-        counting_task.cancel()
-        try:
-            await counting_task
-        except asyncio.CancelledError:
-            pass
-        
-        print(f"Total ticker update events received in one minute: {counter[0]}")
+        # Start both tasks concurrently
+        await asyncio.gather(
+            counter.handle_messages(websocket),
+            counter.print_stats()
+        )
 
 if __name__ == "__main__":
-    asyncio.run(measure_ticker_updates())
+    try:
+        asyncio.get_event_loop().run_until_complete(monitor_btc_updates())
+    except KeyboardInterrupt:
+        print("\nMonitoring stopped")
