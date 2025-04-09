@@ -1,0 +1,113 @@
+exchanges:
+  gateio:
+    enabled: true
+    testnet: false  # Switch to true for testnet
+    api:
+      ws_base: 
+        mainnet: "wss://ws.gate.io/v4"
+        testnet: "wss://fx-api-testnet.gateio.ws/ws/v4/"
+      rest_base: 
+        mainnet: "https://api.gateio.ws/api/v4"
+        testnet: "https://fx-api-testnet.gateio.ws/api/v4"
+      auth_type: "HMAC_SHA512"
+      key: "YOUR_API_KEY"
+      secret: "YOUR_API_SECRET"
+    
+    channels:
+      ticker: 
+        name: "spot.tickers"
+        path: "result.last"          # JSON path to price
+        event_type: "update"        # Event type to filter
+      orders: 
+        name: "spot.orders"
+        event_path: "event"         # Path to event type
+        status_path: "result.status" # Path to order status
+        symbol_path: "result.symbol" # Path to symbol
+        client_id_path: "result.client_order_id" # Path to client ID
+    
+    order_types:
+      stop_limit: "limit"
+      market: "market"
+      stop_market: "stop_market"
+    
+    order_params:
+      stop_limit:
+        trigger_key: "stopPrice"
+        limit_key: "price"
+        amount_key: "amount"
+        time_in_force: "IOC"
+        price_type: 1
+      market:
+        amount_key: "amount"
+    
+    message_templates:
+      auth:
+        method: "api_key"
+        key_header: "KEY"
+        sign_header: "SIGN"
+        param_format: "channel={channel}&event={event}&time={time}"
+      subscribe:
+        channel_key: "channel"
+        event_key: "event"
+        payload_key: "payload"
+      order_create:
+        channel: "spot.order"
+        event: "create"
+      order_amend:
+        channel: "spot.order"
+        event: "amend"
+    
+    symbol_format:
+      delimiter: "_"
+      case: "upper"
+      components: ["base", "quote"]  # [base, quote] or [quote, base]
+      suffix: ""                    # Optional suffix
+    
+    rate_limits:
+      websocket:
+        max_connections: 5
+        messages_per_second: 20
+    
+    precision:
+      price: 4
+      amount: 6
+      fee: 3
+    
+    validation:
+      key_length: 32
+      secret_length: 64
+
+strategy:
+  default_exchange: "gateio"
+  currency_pair: "BTC_USDT"
+  trade_limit: 6
+  parallel_instances: 12
+  dynamic_multiplier: 24
+  fallback_instances: 12
+  price_refresh_interval: 5.0
+
+retry_config:
+  websocket:
+    max_retries: 3
+    first_retry_immediate: true
+    initial_interval: 0.01
+    multiplier: 2
+  order_placement:
+    max_retries: 2
+    first_retry_immediate: true
+    initial_interval: 0.1
+    multiplier: 1.5
+  order_amendment:
+    max_retries: 1
+    logging_only: true
+
+logging:
+  enabled: true
+  file: "trading_bot.log"
+  level: "INFO"
+  max_size_mb: 10
+  backups: 3
+
+monitoring:
+  health_check_interval: 60
+  performance_sampling: true 
